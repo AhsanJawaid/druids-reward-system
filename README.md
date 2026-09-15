@@ -1,4 +1,4 @@
-# Atelier Rewards (Shopify + Laravel)
+# Rewards System (Shopify + Laravel)
 
 A **scoped** loyalty slice: Laravel owns the points ledger; Shopify remains the store and the place a discount code is spent. This is not a Smile/Yotpo clone (no tiers, referrals, or POS). It is enough to earn on paid orders, reverse on refunds, redeem for a single-use Admin GraphQL discount, and inspect the integration.
 
@@ -42,7 +42,7 @@ php artisan migrate --seed
 php artisan serve --host=127.0.0.1 --port=43123
 ```
 
-Open [http://127.0.0.1:43123](http://127.0.0.1:43123). Seeded member: `maya@atelier.example` (180 pts).
+Open [http://127.0.0.1:43123](http://127.0.0.1:43123). Seeded member: `maya@example.com` (180 pts).
 
 ```bash
 php artisan test
@@ -52,8 +52,8 @@ php artisan test
 
 Download from the repo:
 
-- `docs/Atelier-Rewards-Instruction-Manual.pdf`
-- `docs/Atelier-Rewards-Instruction-Manual.docx`
+- `docs/Rewards-System-Instruction-Manual.pdf`
+- `docs/Rewards-System-Instruction-Manual.docx`
 
 ## GraphQL (no extra account)
 

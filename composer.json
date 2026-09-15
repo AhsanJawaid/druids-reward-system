@@ -1,6 +1,6 @@
 {
     "$schema": "https://getcomposer.org/schema.json",
-    "name": "atelier/rewards",
+    "name": "rewards/portal",
     "type": "project",
     "description": "Scoped Shopify loyalty ledger for Laravel: earn on paid orders, redeem via Admin GraphQL discount codes.",
     "keywords": ["laravel", "framework"],

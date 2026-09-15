@@ -24,9 +24,9 @@
             @endforeach
             </tbody>
         </table>
-        <h2 style="margin-top:22px">Discount codes</h2>
+        <h2 style="margin-top:22px">Discount codes (use at Shopify checkout)</h2>
         @forelse ($customer->redemptions as $redemption)
-            <p><code>{{ $redemption->discount_code }}</code> · {{ $redemption->reward->name }} · until {{ $redemption->expires_at?->toFormattedDateString() }}</p>
+            <p style="margin:10px 0"><span class="code-chip">{{ $redemption->discount_code }}</span> · {{ $redemption->reward->name }} · until {{ $redemption->expires_at?->toFormattedDateString() }}</p>        
         @empty
             <p class="muted">No codes yet.</p>
         @endforelse

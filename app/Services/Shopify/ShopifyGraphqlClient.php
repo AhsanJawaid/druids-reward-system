@@ -222,7 +222,7 @@ GQL;
                 'data' => [
                     'shop' => [
                         'name' => 'Demo store',
-                        'email' => 'merchant@atelier.example',
+                        'email' => 'merchant@example.com',
                         'myshopifyDomain' => ShopifyConfig::storeDomain() ?: 'demo-store.myshopify.com',
                         'currencyCode' => 'USD',
                     ],

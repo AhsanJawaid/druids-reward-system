@@ -45,10 +45,14 @@ class StorefrontController extends Controller
         return view('storefront.home', [
             'products' => self::CATALOG,
             'customer' => $customer,
+            'issuedCodes' => $customer
+                ? $customer->redemptions()->with('reward')->latest()->get()
+                : collect(),
             'rewards' => Reward::query()->where('active', true)->orderBy('points_cost')->get(),
             'settings' => ProgramSetting::current(),
             'shop' => config('shopify.store_domain'),
             'mocked' => app(\App\Services\Shopify\ShopifyGraphqlClient::class)->shouldMock(),
+            'justIssued' => session('discount_code'),
         ]);
     }
 
@@ -138,15 +142,18 @@ class StorefrontController extends Controller
             return back()->withErrors(['email' => 'Look up a customer email first.']);
         }
 
+        $reward = Reward::query()->findOrFail($data['reward_id']);
+
         try {
-            $redemption = $rewards->redeem($customer, Reward::query()->findOrFail($data['reward_id']));
+            $redemption = $rewards->redeem($customer, $reward);
         } catch (InsufficientPointsException $e) {
             return back()->withErrors(['reward_id' => $e->getMessage()]);
         }
 
-        return back()->with(
-            'status',
-            'Shopify discount '.$redemption->discount_code.' issued. Apply it at checkout on the connected store.'
-        );
+        return back()->with([
+            'status' => 'Your discount code is ready. Copy it and paste it at Shopify checkout.',
+            'discount_code' => $redemption->discount_code,
+            'discount_reward' => $reward->name,
+        ]);
     }
 }

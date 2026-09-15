@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the Atelier Rewards instruction manual (DOCX + PDF)."""
+"""Generate the Rewards System instruction manual (DOCX + PDF)."""
 
 from pathlib import Path
 
@@ -15,7 +15,7 @@ SECTIONS = [
     (
         "1. What this application is",
         [
-            "Atelier Rewards is a scoped loyalty (points) system for a Shopify store, built in PHP Laravel.",
+            "Rewards System is a scoped loyalty (points) system for a Shopify store, built in PHP Laravel.",
             "Laravel stores customer points. Shopify stays the store where orders are paid and discount codes are used.",
             "This is not a full Smile.io / Yotpo clone. It covers the usual assessment slice: earn on paid orders, reverse on refunds, redeem for a single-use discount, HMAC webhooks, and Admin GraphQL.",
             "Shoppers use the Shop page. You use Admin to connect Shopify, set points rules, and manage rewards.",
@@ -140,7 +140,7 @@ class ManualPDF(FPDF):
     def header(self):
         self.set_font("Helvetica", "B", 9)
         self.set_text_color(37, 99, 235)
-        self.cell(0, 8, "Atelier Rewards  |  Instruction manual", align="L")
+        self.cell(0, 8, "Rewards System  |  Instruction manual", align="L")
         self.ln(4)
         self.set_draw_color(229, 231, 235)
         self.line(18, 16, 192, 16)
@@ -160,7 +160,7 @@ def write_pdf(path: Path) -> None:
     pdf.add_page()
     pdf.set_font("Helvetica", "B", 22)
     pdf.set_text_color(17, 24, 39)
-    pdf.multi_cell(174, 10, "Atelier Rewards")
+    pdf.multi_cell(174, 10, "Rewards System")
     pdf.set_font("Helvetica", "", 12)
     pdf.set_text_color(107, 114, 128)
     pdf.multi_cell(174, 7, "Shopify + Laravel points system. Instruction manual for live servers and your Shopify store.")
@@ -189,7 +189,7 @@ def write_docx(path: Path) -> None:
 
     t = doc.add_paragraph()
     t.alignment = WD_ALIGN_PARAGRAPH.LEFT
-    run = t.add_run("Atelier Rewards")
+    run = t.add_run("Rewards System")
     run.bold = True
     run.font.size = Pt(26)
     run.font.color.rgb = RGBColor(17, 24, 39)
@@ -208,8 +208,8 @@ def write_docx(path: Path) -> None:
 
 
 if __name__ == "__main__":
-    pdf_path = OUT / "Atelier-Rewards-Instruction-Manual.pdf"
-    docx_path = OUT / "Atelier-Rewards-Instruction-Manual.docx"
+    pdf_path = OUT / "Rewards-System-Instruction-Manual.pdf"
+    docx_path = OUT / "Rewards-System-Instruction-Manual.docx"
     write_pdf(pdf_path)
     write_docx(docx_path)
     print(pdf_path)

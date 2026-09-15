@@ -13,7 +13,7 @@ class DatabaseSeeder extends Seeder
 {
     public function run(): void
     {
-        ProgramSetting::putValue('program_name', 'Atelier Rewards');
+        ProgramSetting::putValue('program_name', 'Rewards System');
         ProgramSetting::putValue('points_per_dollar', '1');
         ProgramSetting::putValue('min_order_amount', '0');
         ProgramSetting::putValue('discount_expiry_days', '30');
@@ -50,14 +50,14 @@ class DatabaseSeeder extends Seeder
             'id' => 'gid://shopify/Order/1001',
             'admin_graphql_api_id' => 'gid://shopify/Order/1001',
             'name' => '#1001',
-            'email' => 'maya@atelier.example',
+            'email' => 'maya@example.com',
             'financial_status' => 'paid',
             'subtotal_price' => '120.00',
             'total_price' => '120.00',
             'currency' => 'USD',
             'customer' => [
                 'id' => 'gid://shopify/Customer/maya',
-                'email' => 'maya@atelier.example',
+                'email' => 'maya@example.com',
                 'first_name' => 'Maya Chen',
             ],
         ];
@@ -75,20 +75,20 @@ class DatabaseSeeder extends Seeder
             'id' => 'gid://shopify/Order/2001',
             'admin_graphql_api_id' => 'gid://shopify/Order/2001',
             'name' => '#2001',
-            'email' => 'jordan@atelier.example',
+            'email' => 'jordan@example.com',
             'financial_status' => 'paid',
             'subtotal_price' => '40.00',
             'total_price' => '40.00',
             'currency' => 'USD',
             'customer' => [
                 'id' => 'gid://shopify/Customer/jordan',
-                'email' => 'jordan@atelier.example',
+                'email' => 'jordan@example.com',
                 'first_name' => 'Jordan Blake',
             ],
         ], $shop);
 
         // Touch the query so seeder customers exist even if earn skipped.
-        Customer::query()->where('email', 'maya@atelier.example')->first();
+        Customer::query()->where('email', 'maya@example.com')->first();
         PointTransaction::query()->count();
     }
 }

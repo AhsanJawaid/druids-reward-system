@@ -30,7 +30,7 @@ class RewardsServiceTest extends TestCase
         $tx = $this->service()->earnFromOrder($this->order('gid://shopify/Order/1', '48.90'), 'demo.myshopify.com');
 
         $this->assertSame(48, $tx->points);
-        $this->assertSame(48, Customer::query()->where('email', 'maya@atelier.example')->value('points_balance'));
+        $this->assertSame(48, Customer::query()->where('email', 'maya@example.com')->value('points_balance'));
     }
 
     public function test_duplicate_order_webhook_is_idempotent(): void
@@ -50,7 +50,7 @@ class RewardsServiceTest extends TestCase
         $tx = $this->service()->refundOrder([
             'id' => 'gid://shopify/Refund/2',
             'order_id' => 'gid://shopify/Order/2',
-            'email' => 'maya@atelier.example',
+            'email' => 'maya@example.com',
             'transactions' => [['amount' => '100.00']],
         ], 'demo.myshopify.com');
 
@@ -62,7 +62,7 @@ class RewardsServiceTest extends TestCase
     {
         $customer = Customer::query()->create([
             'shop_domain' => 'demo.myshopify.com',
-            'email' => 'maya@atelier.example',
+            'email' => 'maya@example.com',
             'name' => 'Maya',
             'points_balance' => 20,
         ]);
@@ -82,7 +82,7 @@ class RewardsServiceTest extends TestCase
     {
         $customer = Customer::query()->create([
             'shop_domain' => 'demo.myshopify.com',
-            'email' => 'maya@atelier.example',
+            'email' => 'maya@example.com',
             'name' => 'Maya',
             'points_balance' => 150,
         ]);
@@ -117,8 +117,9 @@ class RewardsServiceTest extends TestCase
     public function test_storefront_and_admin_render(): void
     {
         $this->seed();
-        $this->get('/')->assertOk()->assertSee('Atelier');
-        $this->get('/admin')->assertOk()->assertSee('Overview');
+        $this->get('/')->assertOk()->assertSee('Rewards Portal');
+        $this->get('/admin')->assertOk()->assertSee('Reports');
+        $this->get('/admin')->assertSee('Where the redeem codes are');
     }
 
     private function service(): RewardsService
@@ -135,14 +136,14 @@ class RewardsServiceTest extends TestCase
             'id' => $id,
             'admin_graphql_api_id' => $id,
             'name' => '#T-1',
-            'email' => 'maya@atelier.example',
+            'email' => 'maya@example.com',
             'financial_status' => 'paid',
             'subtotal_price' => $subtotal,
             'total_price' => $subtotal,
             'currency' => 'USD',
             'customer' => [
                 'id' => 'gid://shopify/Customer/maya',
-                'email' => 'maya@atelier.example',
+                'email' => 'maya@example.com',
                 'first_name' => 'Maya Chen',
             ],
         ];

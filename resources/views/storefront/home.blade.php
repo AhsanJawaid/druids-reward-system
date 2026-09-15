@@ -6,12 +6,12 @@
 <section class="hero">
     <div>
         <p class="kicker">{{ $settings['program_name'] }}</p>
-        <h1>Shop, earn points, redeem a code</h1>
-        <p class="lede">You get {{ rtrim(rtrim(number_format((float) $settings['points_per_dollar'], 2), '0'), '.') }} point{{ (float) $settings['points_per_dollar'] == 1 ? '' : 's' }} for every $1 spent. Redeem points for a Shopify discount code.</p>
+        <h1>Earn points. Get a discount code.</h1>
+        <p class="lede">You get {{ rtrim(rtrim(number_format((float) $settings['points_per_dollar'], 2), '0'), '.') }} point{{ (float) $settings['points_per_dollar'] == 1 ? '' : 's' }} for every $1 spent. Redeem points to receive a Shopify checkout code.</p>
         <div class="steps">
             <span class="step-chip">1. Enter your email</span>
             <span class="step-chip">2. Buy an item</span>
-            <span class="step-chip">3. Redeem a reward</span>
+            <span class="step-chip">3. Redeem — your code appears here</span>
         </div>
         <p class="tiny" style="margin-top:12px">{{ $mocked ? 'Demo mode (no live Shopify token yet)' : 'Live Shopify store: '.$shop }}</p>
     </div>
@@ -20,16 +20,36 @@
         <form method="post" action="{{ route('storefront.identify') }}">
             @csrf
             <label for="email">Email</label>
-            <input id="email" name="email" type="email" required placeholder="you@email.com" value="{{ $customer?->email ?? session('storefront_email', 'maya@atelier.example') }}">
+            <input id="email" name="email" type="email" required placeholder="you@email.com" value="{{ $customer?->email ?? session('storefront_email', 'maya@example.com') }}">
             <button type="submit">Show my points</button>
         </form>
         @if ($customer)
             <p class="points" style="margin-top:16px">{{ number_format($customer->points_balance) }} <small>{{ $customer->name ?: $customer->email }}</small></p>
         @else
-            <p class="muted" style="margin-top:12px">Try <strong>maya@atelier.example</strong> to see a sample balance.</p>
+            <p class="muted" style="margin-top:12px">Try <strong>maya@example.com</strong> to see a sample balance.</p>
         @endif
     </aside>
 </section>
+
+@if ($customer && ($issuedCodes->isNotEmpty() || session('discount_code')))
+<section class="panel" style="margin-bottom:24px">
+    <h2>Your discount codes</h2>
+    <p class="muted">This is where redeem codes live. Copy a code and paste it in the discount box at Shopify checkout.</p>
+    <table>
+        <thead><tr><th>Code</th><th>Reward</th><th>Issued</th><th>Use by</th></tr></thead>
+        <tbody>
+        @foreach ($issuedCodes as $code)
+            <tr>
+                <td><span class="code-chip">{{ $code->discount_code }}</span></td>
+                <td>{{ $code->reward->name }}</td>
+                <td class="tiny">{{ $code->created_at->format('M j, g:ia') }}</td>
+                <td class="tiny">{{ $code->expires_at?->format('M j, Y') ?: '—' }}</td>
+            </tr>
+        @endforeach
+        </tbody>
+    </table>
+</section>
+@endif
 
 <h2>Buy to earn</h2>
 <p class="muted">Each purchase adds points using the same rules as a paid Shopify order.</p>
@@ -43,7 +63,7 @@
                 @csrf
                 <input type="hidden" name="sku" value="{{ $product['sku'] }}">
                 <label>Email for this order</label>
-                <input type="email" name="email" required value="{{ $customer?->email ?? session('storefront_email', 'maya@atelier.example') }}">
+                <input type="email" name="email" required value="{{ $customer?->email ?? session('storefront_email', 'maya@example.com') }}">
                 <button type="submit">Buy and earn</button>
             </form>
         </article>
@@ -53,7 +73,7 @@
 <section class="split">
     <div class="panel">
         <h2>Redeem a reward</h2>
-        <p class="muted">Spend points. We create a one-time discount code for your Shopify checkout.</p>
+        <p class="muted">After you click Redeem, your code shows in the green box at the top and in “Your discount codes”.</p>
         <div class="rewards-list">
             @forelse ($rewards as $reward)
                 <div class="reward-row">
@@ -70,12 +90,12 @@
                     </form>
                 </div>
             @empty
-                <p class="muted">No rewards yet. Add them in Admin → Rewards.</p>
+                <p class="muted">No rewards yet. Add them in Reports → Rewards.</p>
             @endforelse
         </div>
     </div>
     <div class="panel">
-        <h2>History</h2>
+        <h2>Points history</h2>
         @if ($customer)
             <table>
                 <thead><tr><th>When</th><th>What happened</th><th>Points</th></tr></thead>

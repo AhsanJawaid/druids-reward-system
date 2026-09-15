@@ -28,7 +28,7 @@ class ProgramSetting extends Model
     public static function current(): array
     {
         return [
-            'program_name' => static::getValue('program_name', 'Atelier Rewards'),
+            'program_name' => static::getValue('program_name', 'Rewards System'),
             'points_per_dollar' => (float) static::getValue('points_per_dollar', '1'),
             'min_order_amount' => (float) static::getValue('min_order_amount', '0'),
             'discount_expiry_days' => (int) static::getValue('discount_expiry_days', '30'),

@@ -42,10 +42,10 @@ class ShopifyWebhookHmacTest extends TestCase
         $payload = json_encode([
             'id' => 'gid://shopify/Order/hmac',
             'admin_graphql_api_id' => 'gid://shopify/Order/hmac',
-            'email' => 'hmac@atelier.example',
+            'email' => 'hmac@example.com',
             'financial_status' => 'paid',
             'subtotal_price' => '10.00',
-            'customer' => ['email' => 'hmac@atelier.example', 'first_name' => 'Pat'],
+            'customer' => ['email' => 'hmac@example.com', 'first_name' => 'Pat'],
         ]);
         $hmac = base64_encode(hash_hmac('sha256', $payload, $secret, true));
 
