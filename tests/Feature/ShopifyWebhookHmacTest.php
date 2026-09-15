@@ -13,7 +13,7 @@ class ShopifyWebhookHmacTest extends TestCase
     public function test_invalid_hmac_is_rejected_when_secret_configured(): void
     {
         config(['shopify.webhook_secret' => 'super-secret']);
-        ProgramSetting::putValue('points_per_dollar', '1');
+        ProgramSetting::putValue('points_per_pound', '2');
 
         $payload = json_encode(['id' => 1, 'email' => 'a@b.com', 'subtotal_price' => '10.00', 'financial_status' => 'paid']);
 
@@ -36,7 +36,7 @@ class ShopifyWebhookHmacTest extends TestCase
     {
         $secret = 'super-secret';
         config(['shopify.webhook_secret' => $secret]);
-        ProgramSetting::putValue('points_per_dollar', '1');
+        ProgramSetting::putValue('points_per_pound', '2');
         ProgramSetting::putValue('min_order_amount', '0');
 
         $payload = json_encode([

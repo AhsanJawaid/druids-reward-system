@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Exceptions\IneligibleProductException;
 use App\Exceptions\InsufficientPointsException;
 use App\Http\Controllers\Controller;
 use App\Models\Customer;
@@ -18,21 +19,27 @@ class CustomerRewardController extends Controller
         $data = $request->validate(['email' => ['required', 'email']]);
         $customer = Customer::query()
             ->where('email', strtolower($data['email']))
-            ->with(['transactions' => fn ($q) => $q->latest()->limit(20), 'redemptions.reward'])
+            ->with(['transactions' => fn ($q) => $q->latest()->limit(50), 'redemptions.reward'])
             ->first();
+
+        $rewards = Reward::query()->where('active', true)->orderBy('points_cost')->get();
 
         if (! $customer) {
             return response()->json([
                 'customer' => null,
                 'settings' => ProgramSetting::current(),
-                'rewards' => Reward::query()->where('active', true)->orderBy('points_cost')->get(),
+                'rewards' => $rewards,
             ], 404);
         }
 
         return response()->json([
-            'customer' => $customer,
+            'customer' => [
+                ...$customer->toArray(),
+                'spendable_points' => $customer->spendablePoints(),
+                'pending_points' => $customer->pendingPoints(),
+            ],
             'settings' => ProgramSetting::current(),
-            'rewards' => Reward::query()->where('active', true)->orderBy('points_cost')->get(),
+            'rewards' => $rewards,
         ]);
     }
 
@@ -41,6 +48,7 @@ class CustomerRewardController extends Controller
         $data = $request->validate([
             'email' => ['required', 'email'],
             'reward_id' => ['required', 'integer', 'exists:rewards,id'],
+            'product_id' => ['nullable', 'string', 'max:120'],
         ]);
 
         $customer = Customer::query()->where('email', strtolower($data['email']))->first();
@@ -49,16 +57,25 @@ class CustomerRewardController extends Controller
         }
 
         try {
-            $redemption = $rewards->redeem($customer, Reward::query()->findOrFail($data['reward_id']));
-        } catch (InsufficientPointsException $e) {
+            $redemption = $rewards->redeem(
+                $customer,
+                Reward::query()->findOrFail($data['reward_id']),
+                $data['product_id'] ?? null,
+            );
+        } catch (InsufficientPointsException|IneligibleProductException $e) {
             return response()->json(['error' => $e->getMessage()], 422);
         }
 
+        $fresh = $customer->fresh();
+
         return response()->json([
+            'code' => $redemption->discount_code,
             'discount_code' => $redemption->discount_code,
-            'shopify_discount_id' => $redemption->shopify_discount_id,
+            'shopify_id' => $redemption->shopify_discount_id,
+            'shopify_object_type' => $redemption->shopify_object_type,
             'expires_at' => $redemption->expires_at,
-            'balance' => $customer->fresh()->points_balance,
+            'balance' => $fresh->points_balance,
+            'spendable_points' => $fresh->spendablePoints(),
             'graphql' => $redemption->graphql_result,
         ]);
     }

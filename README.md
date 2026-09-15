@@ -1,33 +1,28 @@
 # Rewards System (Shopify + Laravel)
 
-A **scoped** loyalty slice: Laravel owns the points ledger; Shopify remains the store and the place a discount code is spent. This is not a Smile/Yotpo clone (no tiers, referrals, or POS). It is enough to earn on paid orders, reverse on refunds, redeem for a single-use Admin GraphQL discount, and inspect the integration.
+A working points-based loyalty program for a Shopify development store. Laravel owns an append-only points ledger. Shopify remains the shop and the place a discount code or gift card is spent. There is no third-party loyalty app.
 
-The attached assessment PDF was not available in this environment. The build follows the brief you gave (Shopify store + PHP Laravel + Admin API GraphQL) plus the usual assessment bar for this kind of task: idempotent webhooks, HMAC verification, an append-only ledger, and a redeem path that calls `discountCodeBasicCreate`.
+## Spec
 
-## What it does
+### Earn (Shopify webhooks only)
 
-| Surface | Behavior |
-| --- | --- |
-| Storefront (`/`) | Demo shop + rewards card. Paying an item posts an `orders/paid`-shaped payload into the same earn service the webhook uses. |
-| Admin (`/admin`) | Balances, rewards, customers, Shopify connection. |
-| `POST /api/webhooks/shopify` | HMAC-checked Shopify webhooks. Handles `orders/paid`, `orders/create`, `refunds/create`. |
-| `GET /api/rewards/customer?email=` | JSON for a theme app block / customer account widget. |
-| `POST /api/rewards/redeem` | JSON redeem → GraphQL discount code. |
+| Action | Points | Conditions |
+| --- | --- | --- |
+| Make a purchase | 2 per £1 | Amount actually paid after discounts. 14-day hold before spendable. |
+| Create an account | 200 | One-time, `customers/create`. |
+| Newsletter signup | 100 | One-time. Only when `email_marketing_consent.state` is `subscribed` (or `accepts_marketing` true). Not on every profile save. |
+| Birthday | 250 | Once per calendar year, from a date the customer provides (note, metafield, tag `birthday:YYYY-MM-DD`, or `note` field). |
 
-### Earn
+### Spend (100 points = £1)
 
-- Configurable **points per dollar** on **subtotal** (shipping/tax ignored).
-- Optional **minimum order amount**.
-- Idempotent on Shopify order id (`shopify:order:{id}:earn`).
-- Skips voided/refunded financial status.
+| Reward | Points | Shopify object |
+| --- | --- | --- |
+| Money off (small) | 500 | `discountCodeBasicCreate` — £5 off |
+| Free shipping | 500 | `discountCodeFreeShippingCreate` |
+| Free product | 1,500 | `discountCodeBasicCreate` 100% off one item after **server-side** collection check |
+| Gift card | 2,500 | `giftCardCreate` — £25 |
 
-### Redeem
-
-1. Balance check.
-2. Admin GraphQL mutation `discountCodeBasicCreate` (amount off or percent, usage limit 1, 30-day expiry by default).
-3. Deduct points in a DB transaction and store the code.
-
-If `SHOPIFY_ACCESS_TOKEN` is empty (or `SHOPIFY_MOCK=true`), the **same GraphQL document and variables** are logged and a mock `gid://shopify/DiscountCodeNode/...` is returned so the slice is runnable without a Partner app.
+Balances are never trusted as a lone number: every change is a `point_transactions` row (`balance_after`, source, Shopify id, hold timestamp).
 
 ## Run locally
 
@@ -40,38 +35,42 @@ php artisan key:generate
 touch database/database.sqlite
 php artisan migrate --seed
 php artisan serve --host=127.0.0.1 --port=43123
-```
-
-Open [http://127.0.0.1:43123](http://127.0.0.1:43123). Seeded member: `maya@example.com` (180 pts).
-
-```bash
 php artisan test
 ```
 
-## Instruction manual
+If `php artisan test` says the command is not defined, Composer was installed without dev packages (`--no-dev`). That is normal on Hostinger. **Do not run tests on the live server** — they wipe database tables. On your computer:
 
-Download from the repo:
+```bash
+cd /path/to/the-folder-that-contains-artisan
+composer install
+php artisan test
+# or
+./vendor/bin/phpunit
+```
 
-- `docs/Rewards-System-Instruction-Manual.pdf`
-- `docs/Rewards-System-Instruction-Manual.docx`
+Do not run the command from the `public` folder.
 
-## GraphQL (no extra account)
+- Portal: `/`
+- Admin reports: `/admin`
+- Rewards catalog (spec tables): `/admin/rewards`
+- Shopify connection: `/admin/settings`
+- Webhook: `POST /api/webhooks/shopify`
 
-You do **not** register for GraphQL. It is Shopify’s Admin API. A custom app token on your shop is enough.
+## Connect a Shopify development store
 
-## Connect a real Shopify shop
+1. Create a custom app with scopes: `read_orders`, `read_customers`, `read_products`, `write_discounts`, `write_gift_cards`.
+2. Install it. Copy the Admin API token and API secret key.
+3. On `/admin/settings`, paste `your-store.myshopify.com`, the token, the secret, and this app’s public HTTPS URL. Enable live mode.
+4. Add Notifications / app webhooks (custom apps often cannot create them via GraphQL):
+   - Order payment (`orders/paid`)
+   - Refund create (`refunds/create`)
+   - Customer creation (`customers/create`)
+   - Customer update (`customers/update`)
+   - URL: `https://your-host/api/webhooks/shopify`
+5. Paste the **eligible free-product collection** ID (GraphQL gid or numeric) so free-product redemption can be verified.
+6. **Mark the order as paid.** Fulfillment of an unpaid order does not award points. Purchase points become spendable after 14 days. Account / newsletter / birthday points are spendable immediately.
 
-Use **Admin → Shopify** (`/admin/settings`). You can paste credentials there (encrypted in the database) or put them in `.env`.
-
-1. Shopify Admin → **Settings → Apps and sales channels → Develop apps → Create an app**.
-2. Admin API scopes: `read_orders`, `read_customers`, `write_discounts`.
-3. Install the app. Copy the **Admin API access token** (`shpat_…`) and the **API secret key** (webhook HMAC).
-4. Shop domain must be `your-store.myshopify.com`.
-5. This app must be reachable on **HTTPS**. Locally: `ngrok http 43123`, then paste `https://….ngrok-free.app` as the public app URL.
-6. Save connection → **Test GraphQL connection** → **Register orders/paid + refunds/create**.
-7. Place a paid order on the store (use the same customer email you look up on `/`). Points post from the webhook. Redeem on `/` to create a real discount code via `discountCodeBasicCreate`.
-
-Optional `.env` instead of the form:
+Optional `.env`:
 
 ```
 SHOPIFY_STORE_DOMAIN=your-shop.myshopify.com
@@ -81,24 +80,18 @@ SHOPIFY_WEBHOOK_SECRET=...
 SHOPIFY_MOCK=false
 ```
 
-HMAC: `X-Shopify-Hmac-Sha256` = `base64(hmac_sha256(raw_body, api_secret))`. Production should always set the secret.
+## Walkthrough
 
-## Git repository
+1. Create a customer on the shop (200 points) and optionally subscribe to email marketing (100 points).
+2. Place an order, apply a discount if you want, **mark as paid**. Ledger shows 2 × £ paid after discounts, with `available_at` +14 days.
+3. After hold (or using spendable account points), redeem **Money off (small)** on `/`. Copy the Shopify discount code into checkout.
 
-This project is already committed on the working branch in this Cloud Agent session. It is **not** yet pushed to a GitHub/GitLab repo of yours until you share that remote.
+## Brief explanation
 
-Send any of:
+See `docs/EXPLANATION.md`.
 
-- the GitHub (or GitLab) HTTPS URL, e.g. `https://github.com/you/rewards.git`
-- or create the GitHub repo from Cursor’s **Create repo** control, then tell me it exists
+## Hostinger 500 after upload
 
-I will add the remote and push `main` (I will not force-push unless you ask). Do not commit Admin API tokens. `.env` stays local; `.env.example` has empty Shopify keys.
+Uploading PHP files does not alter MySQL. Portal / Reports / Rewards query new columns (`slug`, `available_at`, birthday flags, gift-card fields). Settings does not, so it stays up.
 
-## Layout
-
-- `app/Services/Rewards/RewardsService.php` — earn / refund / redeem / adjust
-- `app/Services/Shopify/ShopifyGraphqlClient.php` — Admin GraphQL client + mock
-- `app/Http/Middleware/VerifyShopifyWebhook.php` — HMAC
-- `database/migrations/*` — customers, point_transactions, rewards, redemptions, webhook + GraphQL logs
-
-Out of scope on purpose: Shopify OAuth install flow, billing, multi-store tenancy, checkout UI extensions, and point expiry jobs.
+After this build is on the server, open Settings and click **Update database**, or run `docs/fix-database.sql` in phpMyAdmin, or `php artisan migrate --force` over SSH. Then reload the other pages.

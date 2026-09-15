@@ -31,7 +31,7 @@
             <div class="errors">{{ $errors->first() }}</div>
         @endif
         @yield('content')
-        <footer>Discount codes are listed on Reports. Shoppers also see them on the Portal after they redeem.</footer>
+        <footer>Every balance is the sum of ledger rows. Discount codes and gift cards are created in Shopify on redeem.</footer>
     </div>
 </body>
 </html>

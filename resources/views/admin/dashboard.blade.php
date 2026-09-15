@@ -5,28 +5,28 @@
 @section('content')
 <p class="kicker">Dashboard</p>
 <h1>Reports</h1>
-<p class="muted">{{ $settings['program_name'] }} · {{ $settings['points_per_dollar'] }} points per $1 · {{ $mocked ? 'Demo mode' : 'Live Shopify' }}</p>
+<p class="muted">{{ $settings['program_name'] }} · 2 points per £1 after discounts · 14-day hold · {{ $mocked ? 'Demo Shopify API' : 'Live Shopify' }}</p>
 
 <div class="stats">
     <div class="panel stat"><span class="tiny">Customers</span><b>{{ $customers }}</b></div>
     <div class="panel stat"><span class="tiny">Points given</span><b>{{ number_format($pointsIssued) }}</b></div>
     <div class="panel stat"><span class="tiny">Points spent</span><b>{{ number_format($pointsRedeemed) }}</b></div>
-    <div class="panel stat"><span class="tiny">Discount codes</span><b>{{ $codesCount }}</b></div>
+    <div class="panel stat"><span class="tiny">Shopify objects issued</span><b>{{ $codesCount }}</b></div>
 </div>
-<p class="tiny">Last 30 days: {{ number_format($pointsThisMonth) }} points earned · {{ $redeemsThisMonth }} codes issued</p>
+<p class="tiny">Last 30 days: {{ number_format($pointsThisMonth) }} points earned · {{ $redeemsThisMonth }} redemptions</p>
 
 <section class="panel" style="margin:18px 0">
-    <h2>Where the redeem codes are</h2>
-    <p class="muted">Every time a shopper redeems, Shopify (or demo mode) creates a one-time checkout code. Copy it from this table, or the shopper sees it on the Portal.</p>
+    <h2>Issued Shopify codes and gift cards</h2>
+    <p class="muted">Every redemption calls the Admin API. Codes below are real discount codes or gift cards (or demo GraphQL objects when no token is saved).</p>
     <table>
         <thead>
             <tr>
-                <th>Discount code</th>
+                <th>Code</th>
                 <th>Customer</th>
                 <th>Reward</th>
+                <th>Object</th>
                 <th>Points</th>
                 <th>Issued</th>
-                <th>Use by</th>
             </tr>
         </thead>
         <tbody>
@@ -35,12 +35,12 @@
                 <td><span class="code-chip">{{ $code->discount_code }}</span></td>
                 <td><a href="{{ route('admin.customers.show', $code->customer) }}">{{ $code->customer->email }}</a></td>
                 <td>{{ $code->reward->name }}</td>
+                <td class="tiny">{{ ($code->shopify_object_type ?? 'discount_code') === 'gift_card' ? 'Gift card' : 'Discount' }}</td>
                 <td>{{ $code->points_spent }}</td>
                 <td class="tiny">{{ $code->created_at->format('M j, g:ia') }}</td>
-                <td class="tiny">{{ $code->expires_at?->format('M j, Y') ?: '—' }}</td>
             </tr>
         @empty
-            <tr><td colspan="6" class="muted">No codes yet. Redeem a reward on the Portal to create one.</td></tr>
+            <tr><td colspan="6" class="muted">No redemptions yet.</td></tr>
         @endforelse
         </tbody>
     </table>
@@ -50,22 +50,25 @@
     <div class="panel">
         <h2>Top balances</h2>
         <table>
-            <thead><tr><th>Customer</th><th>Points</th></tr></thead>
+            <thead><tr><th>Customer</th><th>Ledger</th><th>Spendable</th></tr></thead>
             <tbody>
             @forelse ($topCustomers as $member)
                 <tr>
                     <td><a href="{{ route('admin.customers.show', $member) }}">{{ $member->email }}</a><div class="tiny">{{ $member->name }}</div></td>
                     <td>{{ number_format($member->points_balance) }}</td>
+                    <td>{{ number_format($member->spendablePoints()) }}</td>
                 </tr>
             @empty
-                <tr><td colspan="2" class="muted">No customers yet.</td></tr>
+                <tr><td colspan="3" class="muted">No customers yet.</td></tr>
             @endforelse
             </tbody>
         </table>
-        <h2 style="margin-top:20px">Recent points</h2>
+    </div>
+    <div class="panel">
+        <h2>Recent ledger</h2>
         <table>
             <thead><tr><th>Customer</th><th>Event</th><th>Pts</th></tr></thead>
-            <tbody></tbody>
+            <tbody>
             @forelse ($recentTx as $tx)
                 <tr>
                     <td><a href="{{ route('admin.customers.show', $tx->customer) }}">{{ $tx->customer->email }}</a></td>
@@ -73,29 +76,10 @@
                     <td>{{ $tx->points > 0 ? '+' : '' }}{{ $tx->points }}</td>
                 </tr>
             @empty
-                <tr><td colspan="3" class="muted">Nothing yet.</td></tr>
+                <tr><td colspan="3" class="muted">Nothing yet. Place a paid Shopify order to earn.</td></tr>
             @endforelse
             </tbody>
         </table>
-    </div>
-    <div class="panel">
-        <h2>Add test points</h2>
-        <p class="tiny">Pretend a Shopify order was paid, without waiting for a real order.</p>
-        <form method="post" action="{{ route('admin.webhooks.simulate') }}">
-            @csrf
-            <label>Action</label>
-            <select name="topic">
-                <option value="orders/paid">Customer bought something</option>
-                <option value="refunds/create">Customer got a refund</option>
-            </select>
-            <label>Customer email</label>
-            <input name="email" type="email" required value="maya@example.com">
-            <label>Name</label>
-            <input name="name" value="Maya Chen">
-            <label>Order amount ($)</label>
-            <input name="amount" type="number" step="0.01" min="0.01" value="48.00">
-            <button type="submit">Apply</button>
-        </form>
         <p class="tiny" style="margin-top:12px"><a href="{{ route('admin.settings.edit') }}">Connect your Shopify store →</a></p>
     </div>
 </section>

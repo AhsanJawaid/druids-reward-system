@@ -58,6 +58,7 @@ class ShopifyConfig
     {
         return self::publicBase();
     }
+
     public static function publicBase(): string
     {
         $saved = trim((string) self::db('shopify_callback_url'));
@@ -69,9 +70,11 @@ class ShopifyConfig
         $base = $placeholder
             ? rtrim((string) config('app.url'), '/')
             : rtrim($saved, '/');
+
         if (str_starts_with($base, 'http://')) {
             $base = 'https://'.substr($base, 7);
         }
+
         return rtrim($base, '/');
     }
 

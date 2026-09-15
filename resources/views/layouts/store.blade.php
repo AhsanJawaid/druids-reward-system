@@ -34,7 +34,7 @@
             <div class="errors">{{ $errors->first() }}</div>
         @endif
         @yield('content')
-        <footer>Demo shopper: <strong>maya@example.com</strong>. Real points on a live store come from paid Shopify orders.</footer>
+        <footer>Points are awarded only from Shopify webhooks. Redeem on this portal to create a real checkout code or gift card.</footer>
     </div>
 </body>
 </html>

@@ -2,13 +2,13 @@
 
 namespace Tests\Feature;
 
+use App\Exceptions\IneligibleProductException;
 use App\Exceptions\InsufficientPointsException;
 use App\Models\Customer;
 use App\Models\PointTransaction;
 use App\Models\ProgramSetting;
 use App\Models\Reward;
 use App\Services\Rewards\RewardsService;
-use App\Services\Shopify\ShopifyGraphqlClient;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -20,23 +20,32 @@ class RewardsServiceTest extends TestCase
     {
         parent::setUp();
         ProgramSetting::putValue('program_name', 'Test Rewards');
-        ProgramSetting::putValue('points_per_dollar', '1');
+        ProgramSetting::putValue('points_per_pound', '2');
         ProgramSetting::putValue('min_order_amount', '0');
         ProgramSetting::putValue('discount_expiry_days', '30');
+        ProgramSetting::putValue('hold_days', '14');
+        ProgramSetting::putValue('free_product_collection_id', 'gid://shopify/Collection/99');
+        Reward::syncCatalog();
     }
 
-    public function test_paid_order_awards_floor_points_on_subtotal(): void
+    public function test_paid_order_awards_two_points_per_pound_after_discounts_and_holds(): void
     {
         $tx = $this->service()->earnFromOrder($this->order('gid://shopify/Order/1', '48.90'), 'demo.myshopify.com');
 
-        $this->assertSame(48, $tx->points);
-        $this->assertSame(48, Customer::query()->where('email', 'maya@example.com')->value('points_balance'));
+        $this->assertSame(97, $tx->points);
+        $this->assertNotNull($tx->available_at);
+        $this->assertTrue($tx->available_at->isFuture());
+        $customer = Customer::query()->where('email', 'maya@example.com')->first();
+        $this->assertSame(97, $customer->points_balance);
+        $this->assertSame(97, $customer->pendingPoints());
+        $this->assertSame(0, $customer->spendablePoints());
     }
 
     public function test_pending_order_does_not_award_points(): void
     {
         $order = $this->order('gid://shopify/Order/pending', '50.00');
         $order['financial_status'] = 'pending';
+
         $this->assertNull($this->service()->earnFromOrder($order, 'demo.myshopify.com'));
         $this->assertSame(0, PointTransaction::query()->count());
     }
@@ -49,7 +58,7 @@ class RewardsServiceTest extends TestCase
 
         $this->assertTrue($first->is($second));
         $this->assertSame(1, PointTransaction::query()->count());
-        $this->assertSame(100, Customer::query()->value('points_balance'));
+        $this->assertSame(200, Customer::query()->value('points_balance'));
     }
 
     public function test_refund_reverses_points_without_going_negative(): void
@@ -62,8 +71,64 @@ class RewardsServiceTest extends TestCase
             'transactions' => [['amount' => '100.00']],
         ], 'demo.myshopify.com');
 
-        $this->assertSame(-40, $tx->points);
+        $this->assertSame(-80, $tx->points);
         $this->assertSame(0, Customer::query()->value('points_balance'));
+    }
+
+    public function test_account_create_awards_200_once(): void
+    {
+        $payload = $this->customerPayload();
+        $first = $this->service()->awardAccountCreated($payload, 'demo.myshopify.com');
+        $second = $this->service()->awardAccountCreated($payload, 'demo.myshopify.com');
+
+        $this->assertSame(200, $first->points);
+        $this->assertTrue($first->is($second));
+        $this->assertSame(200, Customer::query()->value('points_balance'));
+        $this->assertSame(200, Customer::query()->first()->spendablePoints());
+    }
+
+    public function test_newsletter_awards_only_on_subscribed_opt_in(): void
+    {
+        $payload = $this->customerPayload();
+        $payload['accepts_marketing'] = false;
+        $payload['email_marketing_consent'] = ['state' => 'not_subscribed'];
+        $this->assertNull($this->service()->awardNewsletterOptIn($payload, 'demo.myshopify.com'));
+
+        $payload['email_marketing_consent'] = ['state' => 'subscribed'];
+        $tx = $this->service()->awardNewsletterOptIn($payload, 'demo.myshopify.com');
+        $this->assertSame(100, $tx->points);
+
+        $again = $this->service()->awardNewsletterOptIn($payload, 'demo.myshopify.com');
+        $this->assertTrue($tx->is($again));
+        $this->assertSame(1, PointTransaction::query()->where('source', 'newsletter')->count());
+    }
+
+    public function test_birthday_awards_250_once_per_calendar_year(): void
+    {
+        $this->travelTo(now()->setDate(2026, 3, 15)->setTime(10, 0));
+        $payload = $this->customerPayload();
+        $payload['birthday'] = '1990-03-15';
+
+        $tx = $this->service()->awardBirthdayIfDue($payload, 'demo.myshopify.com');
+        $this->assertSame(250, $tx->points);
+
+        $again = $this->service()->awardBirthdayIfDue($payload, 'demo.myshopify.com');
+        $this->assertTrue($tx->is($again));
+
+        $this->travelTo(now()->setDate(2027, 3, 15)->setTime(10, 0));
+        $next = $this->service()->awardBirthdayIfDue($payload, 'demo.myshopify.com');
+        $this->assertSame(250, $next->points);
+        $this->assertFalse($next->is($tx));
+    }
+
+    public function test_held_purchase_points_cannot_be_spent(): void
+    {
+        $this->service()->earnFromOrder($this->order('gid://shopify/Order/hold', '250.00'), 'demo.myshopify.com');
+        $customer = Customer::query()->first();
+        $reward = Reward::query()->where('slug', 'money_off')->first();
+
+        $this->expectException(InsufficientPointsException::class);
+        $this->service()->redeem($customer, $reward);
     }
 
     public function test_redeem_rejects_insufficient_balance(): void
@@ -74,41 +139,76 @@ class RewardsServiceTest extends TestCase
             'name' => 'Maya',
             'points_balance' => 20,
         ]);
-        $reward = Reward::query()->create([
-            'name' => '$5',
-            'points_cost' => 100,
-            'discount_type' => 'fixed_amount',
-            'discount_value' => 5,
-            'active' => true,
-        ]);
+        $reward = Reward::query()->where('slug', 'money_off')->first();
 
         $this->expectException(InsufficientPointsException::class);
         $this->service()->redeem($customer, $reward);
     }
 
-    public function test_redeem_creates_shopify_discount_and_deducts_points(): void
+    public function test_money_off_creates_shopify_discount_and_deducts_spendable_points(): void
     {
         $customer = Customer::query()->create([
             'shop_domain' => 'demo.myshopify.com',
             'email' => 'maya@example.com',
             'name' => 'Maya',
-            'points_balance' => 150,
+            'points_balance' => 500,
         ]);
-        $reward = Reward::query()->create([
-            'name' => '$5 studio credit',
-            'points_cost' => 100,
-            'discount_type' => 'fixed_amount',
-            'discount_value' => 5,
-            'active' => true,
-        ]);
+        $reward = Reward::query()->where('slug', 'money_off')->first();
 
         $redemption = $this->service()->redeem($customer, $reward);
 
         $this->assertNotEmpty($redemption->discount_code);
-        $this->assertStringStartsWith('RWD-', $redemption->discount_code);
+        $this->assertSame('discount_code', $redemption->shopify_object_type);
         $this->assertStringStartsWith('gid://shopify/DiscountCodeNode/', $redemption->shopify_discount_id);
-        $this->assertSame(50, $customer->fresh()->points_balance);
+        $this->assertSame(0, $customer->fresh()->points_balance);
         $this->assertDatabaseHas('graphql_logs', ['operation' => 'discountCodeBasicCreate']);
+    }
+
+    public function test_gift_card_creates_shopify_gift_card_object(): void
+    {
+        $customer = Customer::query()->create([
+            'shop_domain' => 'demo.myshopify.com',
+            'email' => 'maya@example.com',
+            'name' => 'Maya',
+            'points_balance' => 2500,
+        ]);
+        $reward = Reward::query()->where('slug', 'gift_card')->first();
+
+        $redemption = $this->service()->redeem($customer, $reward);
+
+        $this->assertSame('gift_card', $redemption->shopify_object_type);
+        $this->assertStringStartsWith('gid://shopify/GiftCard/', $redemption->shopify_discount_id);
+        $this->assertDatabaseHas('graphql_logs', ['operation' => 'giftCardCreate']);
+    }
+
+    public function test_free_product_rejects_item_outside_collection(): void
+    {
+        $customer = Customer::query()->create([
+            'shop_domain' => 'demo.myshopify.com',
+            'email' => 'maya@example.com',
+            'name' => 'Maya',
+            'points_balance' => 1500,
+        ]);
+        $reward = Reward::query()->where('slug', 'free_product')->first();
+
+        $this->expectException(IneligibleProductException::class);
+        $this->service()->redeem($customer, $reward, 'gid://shopify/Product/ineligible');
+    }
+
+    public function test_free_product_verifies_collection_then_issues_discount(): void
+    {
+        $customer = Customer::query()->create([
+            'shop_domain' => 'demo.myshopify.com',
+            'email' => 'maya@example.com',
+            'name' => 'Maya',
+            'points_balance' => 1500,
+        ]);
+        $reward = Reward::query()->where('slug', 'free_product')->first();
+
+        $redemption = $this->service()->redeem($customer, $reward, 'gid://shopify/Product/1001');
+
+        $this->assertSame('discount_code', $redemption->shopify_object_type);
+        $this->assertSame('gid://shopify/Product/1001', $redemption->product_gid);
     }
 
     public function test_webhook_without_secret_is_accepted_in_demo(): void
@@ -119,15 +219,35 @@ class RewardsServiceTest extends TestCase
         ]);
 
         $response->assertOk();
-        $this->assertSame(32, Customer::query()->value('points_balance'));
+        $this->assertSame(64, Customer::query()->value('points_balance'));
     }
 
-    public function test_storefront_and_admin_render(): void
+    public function test_customer_create_webhook_awards_account_points(): void
+    {
+        $this->postJson('/api/webhooks/shopify', $this->customerPayload(), [
+            'X-Shopify-Topic' => 'customers/create',
+            'X-Shopify-Shop-Domain' => 'demo.myshopify.com',
+        ])->assertOk();
+
+        $this->assertSame(200, Customer::query()->value('points_balance'));
+    }
+
+    public function test_storefront_and_admin_render_spec_copy(): void
     {
         $this->seed();
-        $this->get('/')->assertOk()->assertSee('Rewards Portal');
-        $this->get('/admin')->assertOk()->assertSee('Reports');
-        $this->get('/admin')->assertSee('Where the redeem codes are');
+        $this->get('/')->assertOk()->assertSee('Earn points from Shopify');
+        $this->get('/admin')->assertOk()->assertSee('Issued Shopify codes');
+        $this->get('/admin')->assertDontSee('Add test points');
+        $this->get('/admin/rewards')
+            ->assertOk()
+            ->assertSee('Money off (small)')
+            ->assertSee('Free shipping')
+            ->assertSee('Free product')
+            ->assertSee('Gift card')
+            ->assertSee('2 points per £1 spent')
+            ->assertDontSee('Add a reward')
+            ->assertDontSee('Current rewards')
+            ->assertDontSee('$5 studio credit');
     }
 
     private function service(): RewardsService
@@ -147,13 +267,28 @@ class RewardsServiceTest extends TestCase
             'email' => 'maya@example.com',
             'financial_status' => 'paid',
             'subtotal_price' => $subtotal,
-            'total_price' => $subtotal,
-            'currency' => 'USD',
+            'total_discounts' => '0.00',
+            'currency' => 'GBP',
             'customer' => [
                 'id' => 'gid://shopify/Customer/maya',
                 'email' => 'maya@example.com',
                 'first_name' => 'Maya Chen',
             ],
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function customerPayload(): array
+    {
+        return [
+            'id' => 4411,
+            'admin_graphql_api_id' => 'gid://shopify/Customer/4411',
+            'email' => 'maya@example.com',
+            'first_name' => 'Maya',
+            'accepts_marketing' => false,
+            'email_marketing_consent' => ['state' => 'not_subscribed'],
         ];
     }
 }

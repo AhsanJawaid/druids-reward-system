@@ -64,6 +64,75 @@ mutation discountCodeBasicCreate($basicCodeDiscount: DiscountCodeBasicInput!) {
 }
 GQL;
 
+    public const FREE_SHIPPING_CREATE = <<<'GQL'
+mutation discountCodeFreeShippingCreate($freeShippingCodeDiscount: DiscountCodeFreeShippingInput!) {
+  discountCodeFreeShippingCreate(freeShippingCodeDiscount: $freeShippingCodeDiscount) {
+    codeDiscountNode {
+      id
+      codeDiscount {
+        ... on DiscountCodeFreeShipping {
+          title
+          codes(first: 1) {
+            nodes {
+              code
+            }
+          }
+        }
+      }
+    }
+    userErrors {
+      field
+      message
+    }
+  }
+}
+GQL;
+
+    public const GIFT_CARD_CREATE = <<<'GQL'
+mutation giftCardCreate($input: GiftCardCreateInput!) {
+  giftCardCreate(input: $input) {
+    giftCard {
+      id
+      initialValue {
+        amount
+        currencyCode
+      }
+    }
+    giftCardCode
+    userErrors {
+      field
+      message
+    }
+  }
+}
+GQL;
+
+    public const PRODUCT_IN_COLLECTION = <<<'GQL'
+query productInCollection($productId: ID!, $collectionId: ID!) {
+  product(id: $productId) {
+    id
+    title
+    inCollection(id: $collectionId)
+  }
+}
+GQL;
+
+    public const COLLECTION_PRODUCTS = <<<'GQL'
+query collectionProducts($id: ID!) {
+  collection(id: $id) {
+    id
+    title
+    products(first: 50) {
+      nodes {
+        id
+        title
+        handle
+      }
+    }
+  }
+}
+GQL;
+
     /**
      * @param  array<string, mixed>  $variables
      * @return array<string, mixed>
@@ -100,7 +169,7 @@ GQL;
         if ($http->failed()) {
             if ($http->status() === 401 && $operation === 'webhookSubscriptionCreate') {
                 throw new ShopifyGraphQLException(
-                    'Shopify returned 401 for webhook create. Custom apps usually cannot register webhooks through the API. Add Order payment and Refund create webhooks in Shopify Admin (steps on the Shopify settings page).'
+                    'Shopify returned 401 for webhook create. Custom apps usually cannot register webhooks through the API. Add Order payment, Refund create, Customer creation, and Customer update webhooks in Shopify Admin (steps on the Shopify settings page).'
                 );
             }
             if ($http->status() === 401) {
@@ -115,7 +184,22 @@ GQL;
     }
 
     /**
-     * @return array{code: string, id: string, mocked: bool, raw: array<string, mixed>}
+     * Create the real Shopify object for a redeemed reward.
+     *
+     * @return array{code: string, id: string, object_type: string, mocked: bool, raw: array<string, mixed>}
+     */
+    public function issueReward(Reward $reward, string $code, int $expiresInDays, ?string $productId = null): array
+    {
+        return match ($reward->slug) {
+            'free_shipping' => $this->createFreeShippingCode($reward, $code, $expiresInDays),
+            'gift_card' => $this->createGiftCard($reward),
+            'free_product' => $this->createFreeProductDiscount($reward, $code, $expiresInDays, (string) $productId),
+            default => $this->createDiscountCode($reward, $code, $expiresInDays),
+        };
+    }
+
+    /**
+     * @return array{code: string, id: string, object_type: string, mocked: bool, raw: array<string, mixed>}
      */
     public function createDiscountCode(Reward $reward, string $code, int $expiresInDays): array
     {
@@ -154,9 +238,173 @@ GQL;
         return [
             'code' => $issued,
             'id' => $id,
+            'object_type' => 'discount_code',
             'mocked' => $this->shouldMock(),
             'raw' => $raw,
         ];
+    }
+
+    /**
+     * @return array{code: string, id: string, object_type: string, mocked: bool, raw: array<string, mixed>}
+     */
+    public function createFreeShippingCode(Reward $reward, string $code, int $expiresInDays): array
+    {
+        $variables = [
+            'freeShippingCodeDiscount' => [
+                'title' => 'Rewards · '.$reward->name,
+                'code' => $code,
+                'startsAt' => now()->toIso8601String(),
+                'endsAt' => now()->addDays($expiresInDays)->toIso8601String(),
+                'usageLimit' => 1,
+                'appliesOncePerCustomer' => true,
+                'customerSelection' => ['all' => true],
+                'destination' => ['all' => true],
+            ],
+        ];
+
+        $raw = $this->mutate('discountCodeFreeShippingCreate', self::FREE_SHIPPING_CREATE, $variables);
+        $this->throwUserErrors($raw, 'data.discountCodeFreeShippingCreate.userErrors');
+        $payload = data_get($raw, 'data.discountCodeFreeShippingCreate');
+        $id = (string) data_get($payload, 'codeDiscountNode.id', 'gid://shopify/DiscountCodeNode/mock-shipping');
+        $issued = (string) data_get($payload, 'codeDiscountNode.codeDiscount.codes.nodes.0.code', $code);
+
+        return [
+            'code' => $issued,
+            'id' => $id,
+            'object_type' => 'discount_code',
+            'mocked' => $this->shouldMock(),
+            'raw' => $raw,
+        ];
+    }
+
+    /**
+     * @return array{code: string, id: string, object_type: string, mocked: bool, raw: array<string, mixed>}
+     */
+    public function createFreeProductDiscount(Reward $reward, string $code, int $expiresInDays, string $productId): array
+    {
+        $variables = [
+            'basicCodeDiscount' => [
+                'title' => 'Rewards · Free product',
+                'code' => $code,
+                'startsAt' => now()->toIso8601String(),
+                'endsAt' => now()->addDays($expiresInDays)->toIso8601String(),
+                'usageLimit' => 1,
+                'appliesOncePerCustomer' => true,
+                'customerSelection' => ['all' => true],
+                'customerGets' => [
+                    'value' => ['percentage' => 1.0],
+                    'items' => [
+                        'products' => [
+                            'productsToAdd' => [$productId],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        $raw = $this->mutate('discountCodeBasicCreate', self::DISCOUNT_CREATE, $variables);
+        $this->throwUserErrors($raw, 'data.discountCodeBasicCreate.userErrors');
+        $payload = data_get($raw, 'data.discountCodeBasicCreate');
+        $id = (string) data_get($payload, 'codeDiscountNode.id', 'gid://shopify/DiscountCodeNode/mock-product');
+        $issued = (string) data_get($payload, 'codeDiscountNode.codeDiscount.codes.nodes.0.code', $code);
+
+        return [
+            'code' => $issued,
+            'id' => $id,
+            'object_type' => 'discount_code',
+            'mocked' => $this->shouldMock(),
+            'raw' => $raw,
+        ];
+    }
+
+    /**
+     * @return array{code: string, id: string, object_type: string, mocked: bool, raw: array<string, mixed>}
+     */
+    public function createGiftCard(Reward $reward): array
+    {
+        $variables = [
+            'input' => [
+                'initialValue' => number_format((float) $reward->discount_value, 2, '.', ''),
+                'note' => 'Rewards System · '.$reward->name,
+            ],
+        ];
+
+        $raw = $this->mutate('giftCardCreate', self::GIFT_CARD_CREATE, $variables);
+        $this->throwUserErrors($raw, 'data.giftCardCreate.userErrors');
+        $payload = data_get($raw, 'data.giftCardCreate');
+        $id = (string) data_get($payload, 'giftCard.id', 'gid://shopify/GiftCard/mock');
+        $code = (string) data_get($payload, 'giftCardCode', 'GC-MOCK');
+
+        return [
+            'code' => $code,
+            'id' => $id,
+            'object_type' => 'gift_card',
+            'mocked' => $this->shouldMock(),
+            'raw' => $raw,
+        ];
+    }
+
+    public function productBelongsToCollection(string $productId, string $collectionId): bool
+    {
+        $collectionId = $this->normalizeCollectionGid($collectionId);
+        $productId = str_starts_with($productId, 'gid://') ? $productId : 'gid://shopify/Product/'.$productId;
+
+        if ($this->shouldMock()) {
+            return ! str_contains($productId, 'ineligible') && $collectionId !== '';
+        }
+
+        $raw = $this->mutate('productInCollection', self::PRODUCT_IN_COLLECTION, [
+            'productId' => $productId,
+            'collectionId' => $collectionId,
+        ], true);
+        $this->throwUserErrors($raw, 'errors');
+
+        return (bool) data_get($raw, 'data.product.inCollection');
+    }
+
+    /**
+     * @return list<array{id: string, title: string, handle: string}>
+     */
+    public function collectionProducts(string $collectionId): array
+    {
+        $collectionId = $this->normalizeCollectionGid($collectionId);
+        if ($collectionId === '') {
+            return [];
+        }
+
+        if ($this->shouldMock()) {
+            return [
+                ['id' => 'gid://shopify/Product/1001', 'title' => 'Eligible sample mug', 'handle' => 'eligible-mug'],
+                ['id' => 'gid://shopify/Product/1002', 'title' => 'Eligible sample tote', 'handle' => 'eligible-tote'],
+            ];
+        }
+
+        $raw = $this->mutate('collectionProducts', self::COLLECTION_PRODUCTS, ['id' => $collectionId], true);
+        $this->throwUserErrors($raw, 'errors');
+
+        $nodes = data_get($raw, 'data.collection.products.nodes', []) ?: [];
+
+        return collect($nodes)->map(fn ($node) => [
+            'id' => (string) data_get($node, 'id'),
+            'title' => (string) data_get($node, 'title'),
+            'handle' => (string) data_get($node, 'handle'),
+        ])->all();
+    }
+
+    private function normalizeCollectionGid(string $id): string
+    {
+        $id = trim($id);
+        if ($id === '') {
+            return '';
+        }
+        if (str_starts_with($id, 'gid://')) {
+            return $id;
+        }
+        if (is_numeric($id)) {
+            return 'gid://shopify/Collection/'.$id;
+        }
+
+        return $id;
     }
 
     /**
@@ -183,7 +431,7 @@ GQL;
      */
     public function registerOrderWebhooks(string $callbackUrl): array
     {
-        $topics = ['ORDERS_PAID', 'REFUNDS_CREATE'];
+        $topics = ['ORDERS_PAID', 'REFUNDS_CREATE', 'CUSTOMERS_CREATE', 'CUSTOMERS_UPDATE'];
         $created = [];
 
         foreach ($topics as $topic) {
@@ -259,6 +507,45 @@ GQL;
             ];
         }
 
+        if ($operation === 'discountCodeFreeShippingCreate') {
+            $shipCode = (string) data_get($variables, 'freeShippingCodeDiscount.code', 'RWD-SHIP');
+
+            return [
+                'data' => [
+                    'discountCodeFreeShippingCreate' => [
+                        'codeDiscountNode' => [
+                            'id' => 'gid://shopify/DiscountCodeNode/'.Str::lower(Str::random(10)),
+                            'codeDiscount' => [
+                                'title' => (string) data_get($variables, 'freeShippingCodeDiscount.title', 'Free shipping'),
+                                'codes' => ['nodes' => [['code' => $shipCode]]],
+                            ],
+                        ],
+                        'userErrors' => [],
+                    ],
+                ],
+                'mocked' => true,
+            ];
+        }
+
+        if ($operation === 'giftCardCreate') {
+            return [
+                'data' => [
+                    'giftCardCreate' => [
+                        'giftCard' => [
+                            'id' => 'gid://shopify/GiftCard/'.Str::lower(Str::random(10)),
+                            'initialValue' => [
+                                'amount' => (string) data_get($variables, 'input.initialValue', '25.00'),
+                                'currencyCode' => 'GBP',
+                            ],
+                        ],
+                        'giftCardCode' => strtoupper(Str::random(4).'-'.Str::random(4).'-'.Str::random(4).'-'.Str::random(4)),
+                        'userErrors' => [],
+                    ],
+                ],
+                'mocked' => true,
+            ];
+        }
+
         return [
             'data' => [
                 'discountCodeBasicCreate' => [
@@ -274,17 +561,6 @@ GQL;
                         ],
                     ],
                     'userErrors' => [],
-                ],
-            ],
-            'extensions' => [
-                'cost' => [
-                    'requestedQueryCost' => 10,
-                    'actualQueryCost' => 10,
-                    'throttleStatus' => [
-                        'maximumAvailable' => 1000,
-                        'currentlyAvailable' => 990,
-                        'restoreRate' => 50,
-                    ],
                 ],
             ],
             'mocked' => true,

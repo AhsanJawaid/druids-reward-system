@@ -14,6 +14,8 @@ class Redemption extends Model
         'points_spent',
         'discount_code',
         'shopify_discount_id',
+        'shopify_object_type',
+        'product_gid',
         'status',
         'expires_at',
         'graphql_result',

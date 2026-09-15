@@ -7,11 +7,21 @@
 <h1>Connect Shopify</h1>
 <p class="muted">No GraphQL account is required. GraphQL is Shopify’s Admin API. Your custom app token is the login.</p>
 
+<div class="help" style="border:1px solid #fecaca;background:#fef2f2">
+    <strong>Other pages show 500 after this update</strong>
+    <p class="tiny" style="margin:8px 0">The new code needs extra database columns (hold dates, reward slugs, gift cards). Uploading PHP files does not run that update by itself.</p>
+    <form method="post" action="{{ route('admin.settings.repair') }}">
+        @csrf
+        <button type="submit">Update database</button>
+    </form>
+    <p class="tiny" style="margin-top:10px">Then open Portal, Reports, and Rewards. If this button fails, run the SQL in <code>docs/fix-database.sql</code> in phpMyAdmin.</p>
+</div>
+
 <div class="help">
     <strong>In Shopify Admin</strong>
     <ol>
         <li>Settings → Apps → Develop apps → Create an app</li>
-        <li>Allow: <code>read_orders</code>, <code>read_customers</code>, <code>write_discounts</code></li>
+        <li>Allow: <code>read_orders</code>, <code>read_customers</code>, <code>read_products</code>, <code>write_discounts</code>, <code>write_gift_cards</code></li>
         <li>Install the app and copy the Admin API access token (<code>shpat_…</code>)</li>
         <li>Copy the API secret key (used to verify webhooks)</li>
         <li>Use the <code>*.myshopify.com</code> hostname from Settings → Domains, not meridianwellnesshub.com</li>
@@ -27,8 +37,9 @@
         <li>Open <strong>Configuration</strong> (or <strong>Webhooks</strong>)</li>
         <li>Create a webhook: Event <strong>Order payment</strong> (<code>orders/paid</code>), format JSON, URL:<br>
             <code>{{ $webhookUrl }}</code></li>
-        <li>Create a second webhook: Event <strong>Refund create</strong> (<code>refunds/create</code>), same URL</li>
-        <li>Save. Then in Shopify create an order and choose <strong>Mark as paid</strong> — fulfilling an unpaid order does not award points</li>
+        <li>Create <strong>Refund create</strong> (<code>refunds/create</code>), same URL</li>
+        <li>Create <strong>Customer creation</strong> (<code>customers/create</code>) and <strong>Customer update</strong> (<code>customers/update</code>), same URL — these award account, newsletter, and birthday points</li>
+        <li>Save. Then in Shopify create an order and choose <strong>Mark as paid</strong> — fulfilling an unpaid order does not award points. Purchase points are held for 14 days.</li>
     </ol>
 </div>
 
@@ -62,18 +73,23 @@
         <p class="tiny" style="margin-top:12px"><span class="pill {{ $mocked ? 'warn' : 'good' }}">{{ $mocked ? 'Demo mode' : 'Live' }}</span> API {{ $apiVersion }}</p>
     </div>
     <div class="panel">
-        <h2>How points are earned</h2>
+        <h2>Program rules (assessment spec)</h2>
         <form method="post" action="{{ route('admin.settings.update') }}">
             @csrf
             @method('PUT')
             <label>Program name</label>
             <input name="program_name" value="{{ $settings['program_name'] }}" required>
-            <label>Points per $1</label>
-            <input name="points_per_dollar" type="number" step="0.01" min="0.01" value="{{ $settings['points_per_dollar'] }}" required>
-            <label>Minimum order ($)</label>
+            <label>Points per £1 (after discounts)</label>
+            <input name="points_per_pound" type="number" step="0.01" min="0.01" value="{{ $settings['points_per_pound'] }}" required>
+            <label>Purchase-point hold (days)</label>
+            <input name="hold_days" type="number" min="0" value="{{ $settings['hold_days'] }}" required>
+            <label>Minimum order (£)</label>
             <input name="min_order_amount" type="number" step="0.01" min="0" value="{{ $settings['min_order_amount'] }}" required>
-            <label>Code expires after (days)</label>
+            <label>Code / gift card expiry (days)</label>
             <input name="discount_expiry_days" type="number" min="1" value="{{ $settings['discount_expiry_days'] }}" required>
+            <label>Eligible free-product collection ID</label>
+            <input name="free_product_collection_id" value="{{ $settings['free_product_collection_id'] }}" placeholder="gid://shopify/Collection/123 or numeric id">
+            <p class="tiny">Server-side redemption checks that the chosen product belongs to this collection before issuing the code.</p>
             <button type="submit">Save rules</button>
         </form>
     </div>

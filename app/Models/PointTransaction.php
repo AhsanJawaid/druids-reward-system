@@ -17,6 +17,7 @@ class PointTransaction extends Model
         'idempotency_key',
         'description',
         'metadata',
+        'available_at',
     ];
 
     protected function casts(): array
@@ -25,6 +26,7 @@ class PointTransaction extends Model
             'points' => 'integer',
             'balance_after' => 'integer',
             'metadata' => 'array',
+            'available_at' => 'datetime',
         ];
     }
 

@@ -34,6 +34,12 @@ class ShopifyWebhookController extends Controller
                 $tx = $rewards->refundOrder($payload, $shop);
                 $message = $tx ? "refund:{$tx->points}:{$tx->idempotency_key}" : 'no-refund';
                 $status = 'processed';
+            } elseif (in_array($topic, ['customers/create', 'customers/update'], true)) {
+                $txs = $rewards->processCustomerWebhook($payload, $shop, $topic);
+                $message = $txs === []
+                    ? 'no-customer-earn'
+                    : collect($txs)->map(fn ($tx) => "{$tx->source}:{$tx->points}")->implode(',');
+                $status = 'processed';
             }
         } catch (\Throwable $e) {
             $status = 'failed';

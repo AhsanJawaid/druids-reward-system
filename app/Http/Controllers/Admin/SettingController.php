@@ -9,8 +9,10 @@ use App\Models\ProgramSetting;
 use App\Models\ShopifyEvent;
 use App\Services\Shopify\ShopifyConfig;
 use App\Services\Shopify\ShopifyGraphqlClient;
+use App\Support\EnsureAssessmentSchema;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\View\View;
 
 class SettingController extends Controller
@@ -36,13 +38,15 @@ class SettingController extends Controller
     {
         $data = $request->validate([
             'program_name' => ['required', 'string', 'max:80'],
-            'points_per_dollar' => ['required', 'numeric', 'min:0.01', 'max:100'],
+            'points_per_pound' => ['required', 'numeric', 'min:0.01', 'max:100'],
+            'hold_days' => ['required', 'integer', 'min:0', 'max:90'],
             'min_order_amount' => ['required', 'numeric', 'min:0'],
             'discount_expiry_days' => ['required', 'integer', 'min:1', 'max:365'],
+            'free_product_collection_id' => ['nullable', 'string', 'max:120'],
         ]);
 
         foreach ($data as $key => $value) {
-            ProgramSetting::putValue($key, $value);
+            ProgramSetting::putValue($key, (string) ($value ?? ''));
         }
 
         return back()->with('status', 'Program rules saved.');
@@ -69,6 +73,7 @@ class SettingController extends Controller
         $data['shopify_webhook_secret'] = filled($data['shopify_webhook_secret'] ?? null)
             ? trim((string) $data['shopify_webhook_secret'])
             : null;
+
         $domain = ShopifyConfig::normalizeDomain($data['shopify_store_domain']);
         if (! str_ends_with($domain, '.myshopify.com') || in_array($domain, [
             'your-store.myshopify.com',
@@ -79,6 +84,7 @@ class SettingController extends Controller
                 'shopify_store_domain' => 'Enter your real *.myshopify.com domain from Shopify Admin → Settings → Domains. Do not use the store’s custom .com address.',
             ]);
         }
+
         if (! ShopifyConfig::hasToken() && blank($data['shopify_access_token'])) {
             return back()->withErrors(['shopify_access_token' => 'Paste the Admin API access token from your Shopify custom app.']);
         }
@@ -127,5 +133,22 @@ class SettingController extends Controller
         $topics = collect($created)->pluck('topic')->implode(', ');
 
         return back()->with('status', 'Registered GraphQL webhooks for '.$topics.' → '.$url);
+    }
+
+    public function repairDatabase(): RedirectResponse
+    {
+        try {
+            Artisan::call('migrate', ['--force' => true]);
+        } catch (\Throwable $e) {
+            // Hostinger often cannot run artisan migrate; column-by-column apply still works.
+        }
+
+        try {
+            EnsureAssessmentSchema::apply();
+        } catch (\Throwable $e) {
+            return back()->withErrors(['program_name' => 'Database update failed: '.$e->getMessage()]);
+        }
+
+        return back()->with('status', 'Database updated for the new rewards spec. Open Portal, Reports, and Rewards — the 500 error should be gone.');
     }
 }

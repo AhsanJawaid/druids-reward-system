@@ -5,13 +5,16 @@
 @section('content')
 <p class="kicker">Customer</p>
 <h1>{{ $customer->name ?: $customer->email }}</h1>
-<p class="muted">{{ $customer->email }} · {{ number_format($customer->points_balance) }} points</p>
+<p class="muted">{{ $customer->email }} · ledger {{ number_format($customer->points_balance) }} · spendable {{ number_format($customer->spendablePoints()) }} · held {{ number_format($customer->pendingPoints()) }}</p>
+@if ($customer->birthday)
+    <p class="tiny">Birthday on file: {{ $customer->birthday->format('j F') }} · last birthday reward year: {{ $customer->last_birthday_reward_year ?: '—' }}</p>
+@endif
 
 <section class="split">
     <div class="panel">
-        <h2>History</h2>
+        <h2>Ledger (auditable)</h2>
         <table>
-            <thead><tr><th>When</th><th>Type</th><th>Detail</th><th>Points</th><th>Balance</th></tr></thead>
+            <thead><tr><th>When</th><th>Type</th><th>Detail</th><th>Points</th><th>Balance</th><th>Available</th></tr></thead>
             <tbody>
             @foreach ($customer->transactions as $tx)
                 <tr>
@@ -20,26 +23,28 @@
                     <td>{{ $tx->description }}</td>
                     <td>{{ $tx->points }}</td>
                     <td>{{ $tx->balance_after }}</td>
+                    <td class="tiny">{{ $tx->available_at ? $tx->available_at->format('M j, Y') : 'Immediate' }}</td>
                 </tr>
             @endforeach
             </tbody>
         </table>
-        <h2 style="margin-top:22px">Discount codes (use at Shopify checkout)</h2>
+        <h2 style="margin-top:22px">Shopify objects issued</h2>
         @forelse ($customer->redemptions as $redemption)
-            <p style="margin:10px 0"><span class="code-chip">{{ $redemption->discount_code }}</span> · {{ $redemption->reward->name }} · until {{ $redemption->expires_at?->toFormattedDateString() }}</p>        
+            <p style="margin:10px 0"><span class="code-chip">{{ $redemption->discount_code }}</span> · {{ $redemption->reward->name }} · {{ $redemption->shopify_object_type }}</p>
         @empty
             <p class="muted">No codes yet.</p>
         @endforelse
     </div>
     <div class="panel">
-        <h2>Add or remove points</h2>
+        <h2>Correction</h2>
+        <p class="tiny">Use only to fix a ledger error. Earning still comes from Shopify webhooks.</p>
         <form method="post" action="{{ route('admin.customers.adjust', $customer) }}">
             @csrf
-            <label>Points (use a negative number to take points away)</label>
-            <input name="points" type="number" required value="25">
+            <label>Points (negative to remove)</label>
+            <input name="points" type="number" required value="0">
             <label>Reason</label>
-            <input name="reason" required placeholder="Bonus for a delay">
-            <button type="submit">Update points</button>
+            <input name="reason" required placeholder="Ledger correction">
+            <button type="submit">Post correction</button>
         </form>
     </div>
 </section>

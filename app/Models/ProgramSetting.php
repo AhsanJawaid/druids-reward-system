@@ -29,9 +29,11 @@ class ProgramSetting extends Model
     {
         return [
             'program_name' => static::getValue('program_name', 'Rewards System'),
-            'points_per_dollar' => (float) static::getValue('points_per_dollar', '1'),
+            'points_per_pound' => (float) static::getValue('points_per_pound', static::getValue('points_per_dollar', '2')),
             'min_order_amount' => (float) static::getValue('min_order_amount', '0'),
             'discount_expiry_days' => (int) static::getValue('discount_expiry_days', '30'),
+            'hold_days' => (int) static::getValue('hold_days', '14'),
+            'free_product_collection_id' => (string) static::getValue('free_product_collection_id', ''),
         ];
     }
 }

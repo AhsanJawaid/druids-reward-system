@@ -3,62 +3,65 @@
 @section('title', 'Rewards')
 
 @section('content')
-<p class="kicker">Catalog</p>
+<p class="kicker">Rewards System</p>
 <h1>Rewards</h1>
-<p class="muted">Each reward becomes a one-time Shopify discount code when a customer redeems it.</p>
+<p class="muted">Points-based loyalty for the Shopify store. Spend rate: <strong>100 points = £1</strong>. Every redemption creates a real Shopify discount code or gift card through the Admin API.</p>
 
-<section class="split">
-    <div class="panel">
-        <h2>Current rewards</h2>
-        @foreach ($rewards as $reward)
-            <form method="post" action="{{ route('admin.rewards.update', $reward) }}" style="margin-bottom:18px;border-bottom:1px solid var(--line);padding-bottom:12px">
-                @csrf
-                @method('PUT')
-                <label>Name</label>
-                <input name="name" value="{{ $reward->name }}" required>
-                <label>Description</label>
-                <input name="description" value="{{ $reward->description }}">
-                <div class="split" style="grid-template-columns:1fr 1fr 1fr">
-                    <div>
-                        <label>Points needed</label>
-                        <input name="points_cost" type="number" min="1" value="{{ $reward->points_cost }}">
-                    </div>
-                    <div>
-                        <label>Discount type</label>
-                        <select name="discount_type">
-                            <option value="fixed_amount" @selected($reward->discount_type === 'fixed_amount')>Dollars off</option>
-                            <option value="percentage" @selected($reward->discount_type === 'percentage')>Percent off</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label>Amount</label>
-                        <input name="discount_value" type="number" step="0.01" value="{{ $reward->discount_value }}">
-                    </div>
-                </div>
-                <label><input type="checkbox" name="active" value="1" @checked($reward->active) style="width:auto"> Show this reward</label>
-                <button type="submit">Save</button>
-            </form>
+<section class="panel" style="margin-bottom:16px">
+    <h2>Section 1 — Earning points</h2>
+    <p class="muted">Points are awarded from real Shopify webhooks only. There are no manual earn buttons.</p>
+    <table>
+        <thead>
+            <tr>
+                <th>Action</th>
+                <th>Points awarded</th>
+                <th>Conditions</th>
+            </tr>
+        </thead>
+        <tbody>
+        @foreach ($earn as $row)
+            <tr>
+                <td><strong>{{ $row['action'] }}</strong></td>
+                <td>{{ $row['points'] }}</td>
+                <td>{{ $row['conditions'] }}</td>
+            </tr>
         @endforeach
-    </div>
-    <div class="panel">
-        <h2>Add a reward</h2>
-        <form method="post" action="{{ route('admin.rewards.store') }}">
-            @csrf
-            <label>Name</label>
-            <input name="name" required placeholder="$10 off">
-            <label>Description</label>
-            <textarea name="description" rows="3" placeholder="Optional"></textarea>
-            <label>Points needed</label>
-            <input name="points_cost" type="number" min="1" value="150" required>
-            <label>Discount type</label>
-            <select name="discount_type">
-                <option value="fixed_amount">Dollars off</option>
-                <option value="percentage">Percent off</option>
-            </select>
-            <label>Amount</label>
-            <input name="discount_value" type="number" step="0.01" value="10" required>
-            <button type="submit">Add reward</button>
-        </form>
-    </div>
+        </tbody>
+    </table>
+</section>
+
+<section class="panel">
+    <h2>Section 2 — Spending points</h2>
+    <p class="muted">The conversion rate for spending is 100 points to £1. Customers redeem accumulated points for these rewards.</p>
+    <table>
+        <thead>
+            <tr>
+                <th>Reward</th>
+                <th>Points required</th>
+                <th>Description</th>
+                <th>Shopify object</th>
+            </tr>
+        </thead>
+        <tbody>
+        @foreach ($rewards as $reward)
+            <tr>
+                <td><strong>{{ $reward->name }}</strong></td>
+                <td>{{ number_format($reward->points_cost) }} points</td>
+                <td>{{ $reward->description }}</td>
+                <td class="tiny">
+                    @if ($reward->slug === 'gift_card')
+                        giftCardCreate (£25)
+                    @elseif ($reward->slug === 'free_shipping')
+                        discountCodeFreeShippingCreate
+                    @elseif ($reward->slug === 'free_product')
+                        discountCodeBasicCreate (100% off verified collection item)
+                    @else
+                        discountCodeBasicCreate (£5)
+                    @endif
+                </td>
+            </tr>
+        @endforeach
+        </tbody>
+    </table>
 </section>
 @endsection
