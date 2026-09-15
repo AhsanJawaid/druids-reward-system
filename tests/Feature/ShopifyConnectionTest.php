@@ -3,7 +3,9 @@
 namespace Tests\Feature;
 
 use App\Services\Shopify\ShopifyConfig;
+use App\Services\Shopify\ShopifyGraphqlClient;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 class ShopifyConnectionTest extends TestCase
@@ -60,5 +62,33 @@ class ShopifyConnectionTest extends TestCase
             'shopify_access_token' => 'shpat_test',
             'shopify_live' => '1',
         ])->assertSessionHasErrors('shopify_webhook_secret');
+    }
+
+    
+    public function test_shop_query_omits_empty_variables_array(): void
+    {
+        Http::fake([
+            'https://hub.myshopify.com/*' => Http::response([
+                'data' => [
+                    'shop' => [
+                        'name' => 'Hub',
+                        'myshopifyDomain' => 'hub.myshopify.com',
+                    ],
+                ],
+            ], 200),
+        ]);
+        ShopifyConfig::saveConnection(
+            'hub.myshopify.com',
+            'shpat_x',
+            'secret',
+            'https://example.com',
+            true,
+        );
+        $result = app(ShopifyGraphqlClient::class)->pingShop();
+        $this->assertSame('Hub', $result['name']);
+        Http::assertSent(function ($request) {
+            $json = json_decode($request->body(), true);
+            return isset($json['query']) && ! array_key_exists('variables', $json);
+        });
     }
 }

@@ -31,7 +31,8 @@ class RewardsService
         }
 
         $status = strtolower((string) data_get($order, 'financial_status', 'paid'));
-        if (in_array($status, ['voided', 'refunded'], true)) {
+        $paidStatuses = ['paid', 'partially_paid', 'partially_refunded'];
+        if (! in_array($status, $paidStatuses, true)) {
             return null;
         }
 

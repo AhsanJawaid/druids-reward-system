@@ -57,13 +57,29 @@ class SettingController extends Controller
         ]);
         $data = $request->validate([
             'shopify_store_domain' => ['required', 'string', 'max:120'],
-            'shopify_access_token' => ['nullable', 'string', 'max:255'],
+            'shopify_access_token' => ['nullable', 'string', 'max:512'],
             'shopify_webhook_secret' => ['nullable', 'string', 'max:255'],
             'shopify_callback_url' => ['nullable', 'url', 'max:255'],
             'shopify_live' => ['nullable', 'boolean'],
         ]);
 
-        if (! ShopifyConfig::hasToken() && blank($data['shopify_access_token'] ?? null)) {
+        $data['shopify_access_token'] = filled($data['shopify_access_token'] ?? null)
+            ? trim((string) $data['shopify_access_token'])
+            : null;
+        $data['shopify_webhook_secret'] = filled($data['shopify_webhook_secret'] ?? null)
+            ? trim((string) $data['shopify_webhook_secret'])
+            : null;
+        $domain = ShopifyConfig::normalizeDomain($data['shopify_store_domain']);
+        if (! str_ends_with($domain, '.myshopify.com') || in_array($domain, [
+            'your-store.myshopify.com',
+            'your-shop.myshopify.com',
+            'demo-store.myshopify.com',
+        ], true)) {
+            return back()->withErrors([
+                'shopify_store_domain' => 'Enter your real *.myshopify.com domain from Shopify Admin → Settings → Domains. Do not use the store’s custom .com address.',
+            ]);
+        }
+        if (! ShopifyConfig::hasToken() && blank($data['shopify_access_token'])) {
             return back()->withErrors(['shopify_access_token' => 'Paste the Admin API access token from your Shopify custom app.']);
         }
 
@@ -72,10 +88,10 @@ class SettingController extends Controller
         }
 
         ShopifyConfig::saveConnection(
-            $data['shopify_store_domain'],
+            $domain,
             $data['shopify_access_token'] ?? null,
             $data['shopify_webhook_secret'] ?? null,
-            $data['shopify_callback_url'] ?: config('app.url'),
+            $data['shopify_callback_url'] ?: ShopifyConfig::publicBase(),
             $request->boolean('shopify_live'),
         );
 

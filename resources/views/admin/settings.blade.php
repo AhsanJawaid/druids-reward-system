@@ -14,8 +14,21 @@
         <li>Allow: <code>read_orders</code>, <code>read_customers</code>, <code>write_discounts</code></li>
         <li>Install the app and copy the Admin API access token (<code>shpat_…</code>)</li>
         <li>Copy the API secret key (used to verify webhooks)</li>
-        <li>Use <code>your-store.myshopify.com</code>, not your custom domain</li>
-        <li>On a live server, the public HTTPS URL is your site, for example <code>https://rewards.yourdomain.com</code></li>
+        <li>Use the <code>*.myshopify.com</code> hostname from Settings → Domains, not meridianwellnesshub.com</li>
+        <li>Public HTTPS URL must be this app’s address, including <code>/public</code> if that is in the browser bar</li>
+    </ol>
+</div>
+
+<div class="help">
+    <strong>If “Turn on order webhooks” says 401 — add webhooks in Shopify</strong>
+    <p class="tiny" style="margin:8px 0">A custom app token can talk to GraphQL for discounts, but Shopify often blocks it from creating webhook subscriptions. Create them by hand:</p>
+    <ol>
+        <li>Shopify Admin → Settings → Apps → Develop apps → your rewards app</li>
+        <li>Open <strong>Configuration</strong> (or <strong>Webhooks</strong>)</li>
+        <li>Create a webhook: Event <strong>Order payment</strong> (<code>orders/paid</code>), format JSON, URL:<br>
+            <code>{{ $webhookUrl }}</code></li>
+        <li>Create a second webhook: Event <strong>Refund create</strong> (<code>refunds/create</code>), same URL</li>
+        <li>Save. Then in Shopify create an order and choose <strong>Mark as paid</strong> — fulfilling an unpaid order does not award points</li>
     </ol>
 </div>
 
@@ -31,7 +44,7 @@
             <label>Webhook secret</label>
             <input name="shopify_webhook_secret" type="password" autocomplete="off" placeholder="Leave blank to keep the saved secret">
             <label>Public HTTPS URL</label>
-            <input name="shopify_callback_url" type="url" value="{{ $callbackBase }}" placeholder="https://your-tunnel.ngrok-free.app">
+            <input name="shopify_callback_url" type="url" required value="{{ (str_contains($callbackBase, 'ngrok') || str_contains($callbackBase, 'localhost') || str_contains($callbackBase, '127.0.0.1')) ? rtrim(preg_replace('#^http://#', 'https://', url('/')), '/') : $callbackBase }}" placeholder="https://yourdomain.com/druids-reward-hub/public">
             <p class="tiny">Webhooks will go to <code>{{ $webhookUrl }}</code></p>
             <label><input type="checkbox" name="shopify_live" value="1" @checked($live) style="width:auto"> Use the live Shopify API</label>
             <button type="submit">Save</button>

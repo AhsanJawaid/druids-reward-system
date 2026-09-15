@@ -46,19 +46,33 @@ class ShopifyConfig
 
     public static function callbackUrl(): string
     {
-        $saved = trim((string) self::db('shopify_callback_url'));
-        if ($saved !== '') {
-            return rtrim($saved, '/').'/api/webhooks/shopify';
+        $base = self::publicBase();
+        if (str_ends_with($base, '/api/webhooks/shopify')) {
+            return $base;
         }
 
-        return rtrim((string) config('app.url'), '/').'/api/webhooks/shopify';
+        return $base.'/api/webhooks/shopify';
     }
 
     public static function callbackBase(): string
     {
+        return self::publicBase();
+    }
+    public static function publicBase(): string
+    {
         $saved = trim((string) self::db('shopify_callback_url'));
+        $placeholder = $saved === ''
+            || str_contains($saved, 'ngrok')
+            || str_contains($saved, 'localhost')
+            || str_contains($saved, '127.0.0.1');
 
-        return $saved !== '' ? rtrim($saved, '/') : rtrim((string) config('app.url'), '/');
+        $base = $placeholder
+            ? rtrim((string) config('app.url'), '/')
+            : rtrim($saved, '/');
+        if (str_starts_with($base, 'http://')) {
+            $base = 'https://'.substr($base, 7);
+        }
+        return rtrim($base, '/');
     }
 
     public static function apiVersion(): string

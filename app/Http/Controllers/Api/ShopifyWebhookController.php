@@ -21,7 +21,12 @@ class ShopifyWebhookController extends Controller
         $status = 'ignored';
 
         try {
-            if (in_array($topic, ['orders/paid', 'orders/create'], true)) {
+            if (in_array($topic, [
+                'orders/paid',
+                'orders/create',
+                'orders/updated',
+                'orders/fulfilled',
+            ], true)) {
                 $tx = $rewards->earnFromOrder($payload, $shop);
                 $message = $tx ? "earn:{$tx->points}:{$tx->idempotency_key}" : 'no-earn';
                 $status = 'processed';

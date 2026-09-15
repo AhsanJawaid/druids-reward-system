@@ -33,6 +33,14 @@ class RewardsServiceTest extends TestCase
         $this->assertSame(48, Customer::query()->where('email', 'maya@example.com')->value('points_balance'));
     }
 
+    public function test_pending_order_does_not_award_points(): void
+    {
+        $order = $this->order('gid://shopify/Order/pending', '50.00');
+        $order['financial_status'] = 'pending';
+        $this->assertNull($this->service()->earnFromOrder($order, 'demo.myshopify.com'));
+        $this->assertSame(0, PointTransaction::query()->count());
+    }
+
     public function test_duplicate_order_webhook_is_idempotent(): void
     {
         $order = $this->order('gid://shopify/Order/9', '100.00');

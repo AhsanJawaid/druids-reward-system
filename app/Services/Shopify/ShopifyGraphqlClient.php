@@ -84,18 +84,30 @@ GQL;
             throw new ShopifyGraphQLException('Add your shop domain and Admin API access token first.');
         }
 
+        $payload = ['query' => $query];
+        if ($variables !== []) {
+            $payload['variables'] = $variables;
+        }
+
         $http = Http::withHeaders([
             'X-Shopify-Access-Token' => $token,
             'Content-Type' => 'application/json',
-        ])->timeout(20)->post("https://{$domain}/admin/api/{$version}/graphql.json", [
-            'query' => $query,
-            'variables' => $variables,
-        ]);
+        ])->timeout(20)->post("https://{$domain}/admin/api/{$version}/graphql.json", $payload);
 
         $body = $http->json() ?? ['errors' => [['message' => 'Empty Shopify response']]];
         $this->log($operation, $query, $variables, $body, $http->status(), false);
 
         if ($http->failed()) {
+            if ($http->status() === 401 && $operation === 'webhookSubscriptionCreate') {
+                throw new ShopifyGraphQLException(
+                    'Shopify returned 401 for webhook create. Custom apps usually cannot register webhooks through the API. Add Order payment and Refund create webhooks in Shopify Admin (steps on the Shopify settings page).'
+                );
+            }
+            if ($http->status() === 401) {
+                throw new ShopifyGraphQLException(
+                    'Shopify returned 401 Unauthorized. Re-install the custom app, copy a new Admin API access token, and paste it on this page.'
+                );
+            }
             throw new ShopifyGraphQLException('Shopify Admin GraphQL HTTP '.$http->status());
         }
 
