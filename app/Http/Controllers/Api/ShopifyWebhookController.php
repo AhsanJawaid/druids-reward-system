@@ -28,13 +28,26 @@ class ShopifyWebhookController extends Controller
                 'orders/fulfilled',
             ], true)) {
                 $tx = $rewards->earnFromOrder($payload, $shop);
-                $message = $tx ? "earn:{$tx->points}:{$tx->idempotency_key}" : 'no-earn';
+                $birthday = $rewards->awardBirthdayIfDue($this->customerPayloadFromOrder($payload), $shop);
+                $parts = [];
+                if ($tx) {
+                    $parts[] = "earn:{$tx->points}:{$tx->idempotency_key}";
+                }
+                if ($birthday && $birthday->wasRecentlyCreated) {
+                    $parts[] = "birthday:{$birthday->points}";
+                }
+                $message = $parts === [] ? 'no-earn' : implode(',', $parts);
                 $status = 'processed';
             } elseif ($topic === 'refunds/create') {
                 $tx = $rewards->refundOrder($payload, $shop);
                 $message = $tx ? "refund:{$tx->points}:{$tx->idempotency_key}" : 'no-refund';
                 $status = 'processed';
-            } elseif (in_array($topic, ['customers/create', 'customers/update'], true)) {
+            } elseif (in_array($topic, [
+                'customers/create',
+                'customers/update',
+                'customers_email_marketing_consent/update',
+                'customers/email_marketing_consent_update',
+            ], true)) {
                 $txs = $rewards->processCustomerWebhook($payload, $shop, $topic);
                 $message = $txs === []
                     ? 'no-customer-earn'
@@ -61,5 +74,20 @@ class ShopifyWebhookController extends Controller
             'topic' => $topic,
             'message' => $message,
         ], $status === 'failed' ? 500 : 200);
+    }
+
+    /**
+     * @param  array<string, mixed>  $order
+     * @return array<string, mixed>
+     */
+    private function customerPayloadFromOrder(array $order): array
+    {
+        $customer = (array) data_get($order, 'customer', []);
+        $customer['email'] = $customer['email'] ?? data_get($order, 'email');
+        $customer['note_attributes'] = $customer['note_attributes'] ?? data_get($order, 'note_attributes', []);
+        $customer['note'] = $customer['note'] ?? data_get($order, 'note', data_get($order, 'customer.note'));
+        $customer['tags'] = $customer['tags'] ?? data_get($order, 'tags', data_get($order, 'customer.tags'));
+
+        return $customer;
     }
 }

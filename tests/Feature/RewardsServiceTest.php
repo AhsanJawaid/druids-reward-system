@@ -232,6 +232,94 @@ class RewardsServiceTest extends TestCase
         $this->assertSame(200, Customer::query()->value('points_balance'));
     }
 
+    public function test_paid_order_uses_amount_after_discounts_not_list_price(): void
+    {
+        $order = $this->order('gid://shopify/Order/disc', '80.00');
+        $order['total_line_items_price'] = '100.00';
+        $order['total_discounts'] = '20.00';
+        $order['current_subtotal_price'] = '80.00';
+
+        $tx = $this->service()->earnFromOrder($order, 'demo.myshopify.com');
+
+        $this->assertSame(160, $tx->points);
+    }
+
+    public function test_free_shipping_creates_shopify_free_shipping_discount(): void
+    {
+        $customer = Customer::query()->create([
+            'shop_domain' => 'demo.myshopify.com',
+            'email' => 'maya@example.com',
+            'name' => 'Maya',
+            'points_balance' => 500,
+        ]);
+        $reward = Reward::query()->where('slug', 'free_shipping')->first();
+
+        $redemption = $this->service()->redeem($customer, $reward);
+
+        $this->assertSame('discount_code', $redemption->shopify_object_type);
+        $this->assertDatabaseHas('graphql_logs', ['operation' => 'discountCodeFreeShippingCreate']);
+    }
+
+    public function test_newsletter_webhook_ignores_profile_save_without_subscribe(): void
+    {
+        $payload = $this->customerPayload();
+        $this->postJson('/api/webhooks/shopify', $payload, [
+            'X-Shopify-Topic' => 'customers/update',
+            'X-Shopify-Shop-Domain' => 'demo.myshopify.com',
+        ])->assertOk();
+
+        $this->assertSame(0, PointTransaction::query()->where('source', 'newsletter')->count());
+
+        $payload['email_marketing_consent'] = ['state' => 'subscribed'];
+        $this->postJson('/api/webhooks/shopify', $payload, [
+            'X-Shopify-Topic' => 'customers/update',
+            'X-Shopify-Shop-Domain' => 'demo.myshopify.com',
+        ])->assertOk();
+
+        $this->assertSame(100, PointTransaction::query()->where('source', 'newsletter')->sum('points'));
+    }
+
+    public function test_footer_newsletter_tag_awards_100_points(): void
+    {
+        $payload = $this->customerPayload();
+        $payload['tags'] = 'newsletter';
+        $payload['email_marketing_consent'] = ['state' => 'not_subscribed'];
+
+        $this->postJson('/api/webhooks/shopify', $payload, [
+            'X-Shopify-Topic' => 'customers/create',
+            'X-Shopify-Shop-Domain' => 'demo.myshopify.com',
+        ])->assertOk();
+
+        $this->assertSame(100, PointTransaction::query()->where('source', 'newsletter')->sum('points'));
+        $this->assertSame(300, Customer::query()->value('points_balance'));
+    }
+
+    public function test_email_marketing_consent_webhook_awards_newsletter_points(): void
+    {
+        $this->postJson('/api/webhooks/shopify', [
+            'customer_id' => 4411,
+            'email_address' => 'maya@example.com',
+            'email_marketing_consent' => ['state' => 'subscribed'],
+        ], [
+            'X-Shopify-Topic' => 'customers_email_marketing_consent/update',
+            'X-Shopify-Shop-Domain' => 'demo.myshopify.com',
+        ])->assertOk();
+
+        $this->assertSame(100, PointTransaction::query()->where('source', 'newsletter')->sum('points'));
+    }
+
+    public function test_admin_settings_lists_required_webhooks(): void
+    {
+        $this->get('/admin/settings')
+            ->assertOk()
+            ->assertSee('orders/paid')
+            ->assertSee('refunds/create')
+            ->assertSee('customers/create')
+            ->assertSee('customers/update')
+            ->assertSee('customers_email_marketing_consent/update')
+            ->assertSee('Create these Shopify webhooks');
+    }
+
     public function test_storefront_and_admin_render_spec_copy(): void
     {
         $this->seed();

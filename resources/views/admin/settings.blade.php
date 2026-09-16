@@ -7,6 +7,7 @@
 <h1>Connect Shopify</h1>
 <p class="muted">No GraphQL account is required. GraphQL is Shopify’s Admin API. Your custom app token is the login.</p>
 
+@if (! $schemaReady)
 <div class="help" style="border:1px solid #fecaca;background:#fef2f2">
     <strong>Other pages show 500 after this update</strong>
     <p class="tiny" style="margin:8px 0">The new code needs extra database columns (hold dates, reward slugs, gift cards). Uploading PHP files does not run that update by itself.</p>
@@ -15,6 +16,57 @@
         <button type="submit">Update database</button>
     </form>
     <p class="tiny" style="margin-top:10px">Then open Portal, Reports, and Rewards. If this button fails, run the SQL in <code>docs/fix-database.sql</code> in phpMyAdmin.</p>
+</div>
+@endif
+
+<div class="help">
+    <strong>Create these Shopify webhooks (all of them)</strong>
+    <p class="tiny" style="margin:8px 0">Same URL and JSON format for each. Custom apps usually cannot register these via the API — add them in the app’s Configuration / Webhooks screen, or Settings → Notifications.</p>
+    <table>
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Shopify event name</th>
+                <th>Topic</th>
+                <th>Awards / action</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>1</td>
+                <td><strong>Order payment</strong></td>
+                <td><code>orders/paid</code></td>
+                <td>2 points per £1 after discounts, 14-day hold. Mark the order as paid.</td>
+            </tr>
+            <tr>
+                <td>2</td>
+                <td><strong>Refund create</strong></td>
+                <td><code>refunds/create</code></td>
+                <td>Reverses purchase points for the refunded amount.</td>
+            </tr>
+            <tr>
+                <td>3</td>
+                <td><strong>Customer creation</strong></td>
+                <td><code>customers/create</code></td>
+                <td>200 account points, once. Also 100 if they genuinely subscribe at signup.</td>
+            </tr>
+            <tr>
+                <td>4</td>
+                <td><strong>Customer update</strong></td>
+                <td><code>customers/update</code></td>
+                <td>100 newsletter points on footer/theme signup (tag <code>newsletter</code>) and on marketing consent. 250 birthday points once per year.</td>
+            </tr>
+            <tr>
+                <td>5</td>
+                <td><strong>Customer email marketing consent update</strong></td>
+                <td><code>customers_email_marketing_consent/update</code></td>
+                <td>100 newsletter points when Shopify records a real subscribe (including Shopify Forms / Email).</td>
+            </tr>
+        </tbody>
+    </table>
+    <p class="tiny" style="margin:10px 0 6px">Callback URL (copy exactly):</p>
+    <p><code>{{ $webhookUrl }}</code></p>
+    <p class="tiny">The store footer form must be Shopify’s customer/newsletter form (or Shopify Forms), not Mailchimp/Klaviyo. Look up the same email on the Portal after subscribe. Points are not emailed and no coupon is created until they redeem.</p>
 </div>
 
 <div class="help">
@@ -30,17 +82,8 @@
 </div>
 
 <div class="help">
-    <strong>If “Turn on order webhooks” says 401 — add webhooks in Shopify</strong>
-    <p class="tiny" style="margin:8px 0">A custom app token can talk to GraphQL for discounts, but Shopify often blocks it from creating webhook subscriptions. Create them by hand:</p>
-    <ol>
-        <li>Shopify Admin → Settings → Apps → Develop apps → your rewards app</li>
-        <li>Open <strong>Configuration</strong> (or <strong>Webhooks</strong>)</li>
-        <li>Create a webhook: Event <strong>Order payment</strong> (<code>orders/paid</code>), format JSON, URL:<br>
-            <code>{{ $webhookUrl }}</code></li>
-        <li>Create <strong>Refund create</strong> (<code>refunds/create</code>), same URL</li>
-        <li>Create <strong>Customer creation</strong> (<code>customers/create</code>) and <strong>Customer update</strong> (<code>customers/update</code>), same URL — these award account, newsletter, and birthday points</li>
-        <li>Save. Then in Shopify create an order and choose <strong>Mark as paid</strong> — fulfilling an unpaid order does not award points. Purchase points are held for 14 days.</li>
-    </ol>
+    <strong>If “Turn on order webhooks” says 401</strong>
+    <p class="tiny" style="margin:8px 0 0">That is normal for custom apps. Create the four webhooks in the table above by hand. Then mark a test order as <strong>paid</strong>.</p>
 </div>
 
 <section class="split">

@@ -4,6 +4,7 @@ namespace App\Services\Rewards;
 
 use App\Exceptions\IneligibleProductException;
 use App\Exceptions\InsufficientPointsException;
+use App\Exceptions\ShopifyGraphQLException;
 use App\Models\Customer;
 use App\Models\PointTransaction;
 use App\Models\ProgramSetting;
@@ -238,7 +239,7 @@ class RewardsService
         }
 
         $shopifyId = $this->customerShopifyId($payload);
-        $key = 'shopify:customer:'.($shopifyId ?: $email).':newsletter';
+        $key = 'shopify:customer:'.$email.':newsletter';
 
         return DB::transaction(function () use ($payload, $shopDomain, $email, $shopifyId, $key) {
             if ($existing = PointTransaction::query()->where('idempotency_key', $key)->first()) {
@@ -335,6 +336,10 @@ class RewardsService
         $customer->refresh();
         if ($customer->spendablePoints() < $reward->points_cost) {
             throw new InsufficientPointsException('Not enough spendable points. Purchase points are held for 14 days.');
+        }
+
+        if ($this->shopify->shouldMock() && ! app()->environment('testing')) {
+            throw new ShopifyGraphQLException('Turn on “Use the live Shopify API” and save a real Admin API token before redeeming. Demo codes are not accepted for this assessment.');
         }
 
         $productGid = $productId ? $this->normalizeProductGid($productId) : null;
@@ -454,10 +459,44 @@ class RewardsService
             data_get($payload, 'customer.email_marketing_consent.state', '')
         ));
 
-        if ($state !== '') {
-            return $state === 'subscribed';
+        if (in_array($state, ['unsubscribed', 'invalid'], true)) {
+            return false;
         }
 
+        if (in_array($state, ['subscribed', 'pending'], true)) {
+            return true;
+        }
+
+        if ($this->acceptsMarketing($payload)) {
+            return true;
+        }
+
+        // Dawn/footer {% form 'customer' %} tags the profile "newsletter" and often
+        // leaves email_marketing_consent as not_subscribed until a later confirm.
+        return $this->hasNewsletterTag($payload);
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    public function hasNewsletterTag(array $payload): bool
+    {
+        $raw = data_get($payload, 'tags', data_get($payload, 'customer.tags', ''));
+        if (is_array($raw)) {
+            $raw = implode(',', $raw);
+        }
+        $tags = array_map('trim', explode(',', strtolower((string) $raw)));
+
+        return in_array('newsletter', $tags, true)
+            || in_array('email subscribe', $tags, true)
+            || in_array('email-subscribe', $tags, true);
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    private function acceptsMarketing(array $payload): bool
+    {
         $accepts = data_get($payload, 'accepts_marketing', data_get($payload, 'customer.accepts_marketing'));
 
         return $accepts === true || $accepts === 'true' || $accepts === 1 || $accepts === '1';
@@ -566,7 +605,7 @@ class RewardsService
         return strtolower((string) data_get(
             $payload,
             'email',
-            data_get($payload, 'customer.email', data_get($payload, 'order.email', ''))
+            data_get($payload, 'email_address', data_get($payload, 'customer.email', data_get($payload, 'order.email', '')))
         ));
     }
 
@@ -575,7 +614,14 @@ class RewardsService
      */
     private function customerShopifyId(array $payload): ?string
     {
-        $id = data_get($payload, 'customer.admin_graphql_api_id', data_get($payload, 'admin_graphql_api_id', data_get($payload, 'customer.id', data_get($payload, 'id'))));
+        $id = data_get(
+            $payload,
+            'customer.admin_graphql_api_id',
+            data_get($payload, 'customer_id', data_get($payload, 'customer.id', data_get($payload, 'admin_graphql_api_id')))
+        );
+        if ($id === null || $id === '') {
+            $id = data_get($payload, 'id');
+        }
         if ($id === null || $id === '') {
             return null;
         }

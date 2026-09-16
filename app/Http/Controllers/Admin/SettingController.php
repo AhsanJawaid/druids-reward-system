@@ -13,6 +13,7 @@ use App\Support\EnsureAssessmentSchema;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\View\View;
 
 class SettingController extends Controller
@@ -31,6 +32,7 @@ class SettingController extends Controller
             'callbackBase' => ShopifyConfig::callbackBase(),
             'webhookUrl' => ShopifyConfig::callbackUrl(),
             'live' => ShopifyConfig::isLive(),
+            'schemaReady' => Schema::hasTable('rewards') && Schema::hasColumn('rewards', 'slug'),
         ]);
     }
 

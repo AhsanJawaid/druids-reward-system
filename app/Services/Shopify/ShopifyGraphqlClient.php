@@ -431,7 +431,13 @@ GQL;
      */
     public function registerOrderWebhooks(string $callbackUrl): array
     {
-        $topics = ['ORDERS_PAID', 'REFUNDS_CREATE', 'CUSTOMERS_CREATE', 'CUSTOMERS_UPDATE'];
+        $topics = [
+            'ORDERS_PAID',
+            'REFUNDS_CREATE',
+            'CUSTOMERS_CREATE',
+            'CUSTOMERS_UPDATE',
+            'CUSTOMERS_EMAIL_MARKETING_CONSENT_UPDATE',
+        ];
         $created = [];
 
         foreach ($topics as $topic) {

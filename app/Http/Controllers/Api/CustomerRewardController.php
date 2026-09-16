@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Exceptions\IneligibleProductException;
 use App\Exceptions\InsufficientPointsException;
+use App\Exceptions\ShopifyGraphQLException;
 use App\Http\Controllers\Controller;
 use App\Models\Customer;
 use App\Models\ProgramSetting;
@@ -62,7 +63,7 @@ class CustomerRewardController extends Controller
                 Reward::query()->findOrFail($data['reward_id']),
                 $data['product_id'] ?? null,
             );
-        } catch (InsufficientPointsException|IneligibleProductException $e) {
+        } catch (InsufficientPointsException|IneligibleProductException|ShopifyGraphQLException $e) {
             return response()->json(['error' => $e->getMessage()], 422);
         }
 

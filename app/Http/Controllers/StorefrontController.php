@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Exceptions\IneligibleProductException;
 use App\Exceptions\InsufficientPointsException;
+use App\Exceptions\ShopifyGraphQLException;
 use App\Models\Customer;
 use App\Models\ProgramSetting;
 use App\Models\Reward;
@@ -88,7 +89,7 @@ class StorefrontController extends Controller
 
         try {
             $redemption = $rewards->redeem($customer, $reward, $data['product_id'] ?? null);
-        } catch (InsufficientPointsException|IneligibleProductException $e) {
+        } catch (InsufficientPointsException|IneligibleProductException|ShopifyGraphQLException $e) {
             return back()->withErrors(['reward_id' => $e->getMessage()]);
         }
 
