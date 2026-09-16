@@ -36,7 +36,16 @@
         @endforelse
     </div>
     <div class="panel">
-        <h2>Correction</h2>
+        <h2>Birthday</h2>
+        <p class="tiny">Shopify does not send metafields in webhooks. Save the date here (or the customer saves it on the Portal). If today matches, 250 points post once this year.</p>
+        <form method="post" action="{{ route('admin.customers.birthday', $customer) }}">
+            @csrf
+            <label>Birthday</label>
+            <input name="birthday" type="date" required value="{{ $customer->birthday?->format('Y-m-d') }}">
+            <button type="submit">Save birthday</button>
+        </form>
+        <p class="tiny" style="margin-top:8px">Last birthday reward year: {{ $customer->last_birthday_reward_year ?: '—' }}</p>
+        <h2 style="margin-top:22px">Correction</h2>
         <p class="tiny">Use only to fix a ledger error. Earning still comes from Shopify webhooks.</p>
         <form method="post" action="{{ route('admin.customers.adjust', $customer) }}">
             @csrf

@@ -39,6 +39,30 @@ class ShopifyConnectionTest extends TestCase
             ->assertSee('north-studio.myshopify.com');
     }
 
+    public function test_strips_bearer_prefix_from_admin_token(): void
+    {
+        $this->post('/admin/settings/shopify', [
+            'shopify_store_domain' => 'north-studio.myshopify.com',
+            'shopify_access_token' => 'Bearer shpat_clean_token',
+            'shopify_webhook_secret' => 'hook-secret',
+            'shopify_callback_url' => 'https://demo.example.com',
+            'shopify_live' => '1',
+        ])->assertRedirect();
+
+        $this->assertSame('shpat_clean_token', ShopifyConfig::accessToken());
+    }
+
+    public function test_rejects_api_secret_as_access_token(): void
+    {
+        $this->from('/admin/settings')->post('/admin/settings/shopify', [
+            'shopify_store_domain' => 'north-studio.myshopify.com',
+            'shopify_access_token' => 'shpss_not_the_admin_token',
+            'shopify_webhook_secret' => 'hook-secret',
+            'shopify_callback_url' => 'https://demo.example.com',
+            'shopify_live' => '1',
+        ])->assertRedirect('/admin/settings')->assertSessionHasErrors('shopify_access_token');
+    }
+
     public function test_register_webhooks_rejects_localhost_callback(): void
     {
         ShopifyConfig::saveConnection(
@@ -93,5 +117,38 @@ class ShopifyConnectionTest extends TestCase
 
             return isset($json['query']) && ! array_key_exists('variables', $json);
         });
+    }
+
+    public function test_client_credentials_exchange_then_pings_shop(): void
+    {
+        Http::fake([
+            'https://hub.myshopify.com/admin/oauth/access_token' => Http::response([
+                'access_token' => 'fresh-oauth-token',
+                'scope' => 'write_discounts',
+                'expires_in' => 86399,
+            ], 200),
+            'https://hub.myshopify.com/admin/api/*' => Http::response([
+                'data' => [
+                    'shop' => [
+                        'name' => 'Hub',
+                        'myshopifyDomain' => 'hub.myshopify.com',
+                    ],
+                ],
+            ], 200),
+        ]);
+
+        ShopifyConfig::saveConnection(
+            'hub.myshopify.com',
+            null,
+            'shpss_secret',
+            'https://example.com',
+            true,
+            'client-id-123',
+            'shpss_secret',
+        );
+
+        $result = app(ShopifyGraphqlClient::class)->pingShop();
+        $this->assertSame('Hub', $result['name']);
+        $this->assertSame('fresh-oauth-token', ShopifyConfig::cachedOauthToken());
     }
 }

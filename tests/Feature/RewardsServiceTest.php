@@ -103,6 +103,34 @@ class RewardsServiceTest extends TestCase
         $this->assertSame(1, PointTransaction::query()->where('source', 'newsletter')->count());
     }
 
+    public function test_portal_save_birthday_today_awards_250(): void
+    {
+        $this->travelTo(now()->setDate(2026, 9, 16)->setTime(12, 0));
+
+        $this->post('/birthday', [
+            'email' => 'maya@example.com',
+            'birthday' => '1990-09-16',
+        ])->assertRedirect();
+
+        $this->assertSame(250, Customer::query()->value('points_balance'));
+        $this->assertSame('1990-09-16', Customer::query()->first()->birthday->toDateString());
+        $this->assertSame(2026, Customer::query()->first()->last_birthday_reward_year);
+    }
+
+    public function test_portal_save_birthday_other_day_stores_without_points(): void
+    {
+        $this->travelTo(now()->setDate(2026, 1, 2)->setTime(12, 0));
+
+        $this->post('/birthday', [
+            'email' => 'maya@example.com',
+            'birthday' => '1990-09-16',
+        ])->assertRedirect();
+
+        $this->assertSame('1990-09-16', Customer::query()->first()->birthday->toDateString());
+        $this->assertSame(0, PointTransaction::query()->where('source', 'birthday')->count());
+        $this->assertSame(0, Customer::query()->value('points_balance'));
+    }
+
     public function test_birthday_awards_250_once_per_calendar_year(): void
     {
         $this->travelTo(now()->setDate(2026, 3, 15)->setTime(10, 0));
@@ -219,7 +247,7 @@ class RewardsServiceTest extends TestCase
         ]);
 
         $response->assertOk();
-        $this->assertSame(64, Customer::query()->value('points_balance'));
+        $this->assertSame(264, Customer::query()->value('points_balance'));
     }
 
     public function test_customer_create_webhook_awards_account_points(): void
@@ -230,6 +258,28 @@ class RewardsServiceTest extends TestCase
         ])->assertOk();
 
         $this->assertSame(200, Customer::query()->value('points_balance'));
+    }
+
+    public function test_unpaid_order_webhook_still_creates_customer_and_account_points(): void
+    {
+        $order = $this->order('gid://shopify/Order/unpaid', '40.00');
+        $order['financial_status'] = 'pending';
+
+        $this->postJson('/api/webhooks/shopify', $order, [
+            'X-Shopify-Topic' => 'orders/create',
+            'X-Shopify-Shop-Domain' => 'demo.myshopify.com',
+        ])->assertOk();
+
+        $this->assertSame(200, Customer::query()->value('points_balance'));
+        $this->assertSame(0, PointTransaction::query()->where('source', 'shopify_order')->count());
+        $this->assertDatabaseHas('shopify_events', ['message' => 'account_create:200,order-received-not-paid']);
+    }
+
+    public function test_webhook_url_is_reachable_with_get(): void
+    {
+        $this->getJson('/api/webhooks/shopify')
+            ->assertOk()
+            ->assertSee('Webhook URL is reachable');
     }
 
     public function test_paid_order_uses_amount_after_discounts_not_list_price(): void
@@ -294,6 +344,21 @@ class RewardsServiceTest extends TestCase
         $this->assertSame(300, Customer::query()->value('points_balance'));
     }
 
+    public function test_paid_order_awards_newsletter_for_existing_subscriber(): void
+    {
+        $order = $this->order('gid://shopify/Order/news', '20.00');
+        $order['customer']['accepts_marketing'] = true;
+        $order['customer']['email_marketing_consent'] = ['state' => 'subscribed'];
+
+        $this->postJson('/api/webhooks/shopify', $order, [
+            'X-Shopify-Topic' => 'orders/paid',
+            'X-Shopify-Shop-Domain' => 'demo.myshopify.com',
+        ])->assertOk();
+
+        $this->assertSame(100, PointTransaction::query()->where('source', 'newsletter')->sum('points'));
+        $this->assertSame(340, Customer::query()->value('points_balance'));
+    }
+
     public function test_email_marketing_consent_webhook_awards_newsletter_points(): void
     {
         $this->postJson('/api/webhooks/shopify', [
@@ -317,13 +382,15 @@ class RewardsServiceTest extends TestCase
             ->assertSee('customers/create')
             ->assertSee('customers/update')
             ->assertSee('customers_email_marketing_consent/update')
-            ->assertSee('Create these Shopify webhooks');
+            ->assertSee('Create these Shopify webhooks')
+            ->assertSee('Birthday 250 points')
+            ->assertSee('Pull latest from Shopify');
     }
 
     public function test_storefront_and_admin_render_spec_copy(): void
     {
         $this->seed();
-        $this->get('/')->assertOk()->assertSee('Earn points from Shopify');
+        $this->get('/')->assertOk()->assertSee('Earn points from Shopify')->assertSee('Save birthday');
         $this->get('/admin')->assertOk()->assertSee('Issued Shopify codes');
         $this->get('/admin')->assertDontSee('Add test points');
         $this->get('/admin/rewards')

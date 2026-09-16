@@ -53,22 +53,64 @@ class StorefrontController extends Controller
         ]);
     }
 
-    public function identify(Request $request): RedirectResponse
+    public function identify(Request $request, RewardsService $rewards): RedirectResponse
     {
         $data = $request->validate([
             'email' => ['required', 'email'],
         ]);
 
-        $request->session()->put('storefront_email', strtolower($data['email']));
+        $email = strtolower($data['email']);
+        $request->session()->put('storefront_email', $email);
 
-        $exists = Customer::query()->where('email', strtolower($data['email']))->exists();
+        $ledger = Customer::query()->where('email', $email)->first();
+        $synced = $rewards->syncShopifyCustomerBonuses(
+            (string) config('shopify.store_domain'),
+            $email,
+            $ledger?->shopify_customer_id,
+        );
+        $newsletterTx = $synced['newsletter'];
+        $birthdayTx = $synced['birthday'];
+
+        if ($newsletterTx && $newsletterTx->wasRecentlyCreated && $newsletterTx->source === 'newsletter') {
+            return back()->with('status', 'Newsletter bonus: 100 points added.');
+        }
+
+        if ($birthdayTx && $birthdayTx->wasRecentlyCreated && $birthdayTx->source === 'birthday') {
+            return back()->with('status', 'Birthday bonus: 250 points added.');
+        }
+
+        $exists = Customer::query()->where('email', $email)->exists();
 
         return back()->with(
             'status',
             $exists
                 ? 'Rewards card loaded.'
-                : 'No ledger yet for this email. Points appear after a real Shopify webhook (paid order, account create, newsletter opt-in, or birthday).'
+                : 'No ledger yet for this email. Place a Shopify order, subscribe, or save your birthday below.'
         );
+    }
+
+    public function saveBirthday(Request $request, RewardsService $rewards): RedirectResponse
+    {
+        $data = $request->validate([
+            'email' => ['required', 'email'],
+            'birthday' => ['required', 'date'],
+        ]);
+
+        $email = strtolower($data['email']);
+        $request->session()->put('storefront_email', $email);
+        $ymd = \Illuminate\Support\Carbon::parse($data['birthday'])->toDateString();
+
+        $tx = $rewards->saveProvidedBirthday(
+            (string) config('shopify.store_domain'),
+            $email,
+            $ymd,
+        );
+
+        if ($tx && $tx->wasRecentlyCreated && $tx->source === 'birthday') {
+            return back()->with('status', 'Birthday saved. 250 birthday points are now on your ledger.');
+        }
+
+        return back()->with('status', 'Birthday saved as '.$ymd.'. 250 points are awarded on that date each year (once per year).');
     }
 
     public function redeem(Request $request, RewardsService $rewards): RedirectResponse

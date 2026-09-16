@@ -30,6 +30,10 @@ class ShopifyWebhookHmacTest extends TestCase
             ],
             $payload
         )->assertStatus(401);
+        $this->assertDatabaseHas('shopify_events', [
+            'status' => 'rejected',
+            'hmac_verified' => 0,
+        ]);
     }
 
     public function test_valid_hmac_is_accepted(): void

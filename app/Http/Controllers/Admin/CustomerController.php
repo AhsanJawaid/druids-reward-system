@@ -36,4 +36,20 @@ class CustomerController extends Controller
 
         return back()->with('status', 'Balance adjusted.');
     }
+
+    public function saveBirthday(Request $request, Customer $customer, RewardsService $rewards): RedirectResponse
+    {
+        $data = $request->validate([
+            'birthday' => ['required', 'date'],
+        ]);
+
+        $ymd = \Illuminate\Support\Carbon::parse($data['birthday'])->toDateString();
+        $tx = $rewards->saveProvidedBirthday($customer->shop_domain, $customer->email, $ymd, $customer->name);
+
+        if ($tx && $tx->wasRecentlyCreated && $tx->source === 'birthday') {
+            return back()->with('status', 'Birthday saved. 250 points added for this year.');
+        }
+
+        return back()->with('status', 'Birthday saved as '.$ymd.'. Points post on that date once per year.');
+    }
 }

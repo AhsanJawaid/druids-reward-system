@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\GraphqlLog;
 use App\Models\ProgramSetting;
 use App\Models\ShopifyEvent;
+use App\Services\Rewards\RewardsService;
 use App\Services\Shopify\ShopifyConfig;
 use App\Services\Shopify\ShopifyGraphqlClient;
 use App\Support\EnsureAssessmentSchema;
@@ -29,6 +30,8 @@ class SettingController extends Controller
             'mocked' => app(ShopifyGraphqlClient::class)->shouldMock(),
             'tokenHint' => ShopifyConfig::tokenHint(),
             'hasToken' => ShopifyConfig::hasToken(),
+            'clientId' => ShopifyConfig::clientId(),
+            'hasClientSecret' => ShopifyConfig::clientSecret() !== '',
             'callbackBase' => ShopifyConfig::callbackBase(),
             'webhookUrl' => ShopifyConfig::callbackUrl(),
             'live' => ShopifyConfig::isLive(),
@@ -60,21 +63,45 @@ class SettingController extends Controller
             'shopify_callback_url' => $request->input('shopify_callback_url') ?: null,
             'shopify_access_token' => $request->input('shopify_access_token') ?: null,
             'shopify_webhook_secret' => $request->input('shopify_webhook_secret') ?: null,
+            'shopify_client_id' => $request->input('shopify_client_id') ?: null,
+            'shopify_client_secret' => $request->input('shopify_client_secret') ?: null,
         ]);
         $data = $request->validate([
             'shopify_store_domain' => ['required', 'string', 'max:120'],
-            'shopify_access_token' => ['nullable', 'string', 'max:512'],
+            'shopify_access_token' => ['nullable', 'string', 'max:2048'],
             'shopify_webhook_secret' => ['nullable', 'string', 'max:255'],
+            'shopify_client_id' => ['nullable', 'string', 'max:120'],
+            'shopify_client_secret' => ['nullable', 'string', 'max:255'],
             'shopify_callback_url' => ['nullable', 'url', 'max:255'],
             'shopify_live' => ['nullable', 'boolean'],
         ]);
 
         $data['shopify_access_token'] = filled($data['shopify_access_token'] ?? null)
-            ? trim((string) $data['shopify_access_token'])
+            ? ShopifyConfig::sanitizeToken((string) $data['shopify_access_token'])
             : null;
         $data['shopify_webhook_secret'] = filled($data['shopify_webhook_secret'] ?? null)
             ? trim((string) $data['shopify_webhook_secret'])
             : null;
+        $data['shopify_client_id'] = filled($data['shopify_client_id'] ?? null)
+            ? trim((string) $data['shopify_client_id'])
+            : null;
+        $data['shopify_client_secret'] = filled($data['shopify_client_secret'] ?? null)
+            ? trim((string) $data['shopify_client_secret'])
+            : null;
+
+        if (filled($data['shopify_access_token'])) {
+            $token = $data['shopify_access_token'];
+            if (str_starts_with($token, 'shpss_') || str_starts_with($token, 'shpca_')) {
+                return back()->withErrors([
+                    'shopify_access_token' => 'Put the API secret in Client secret / Webhook secret, not in Access token. Access token must start with shpat_ — or leave it blank and use Client ID + Client secret.',
+                ]);
+            }
+            if (! str_starts_with($token, 'shpat_')) {
+                return back()->withErrors([
+                    'shopify_access_token' => 'Leave Access token blank if you are using Client ID + secret. A static token must start with shpat_.',
+                ]);
+            }
+        }
 
         $domain = ShopifyConfig::normalizeDomain($data['shopify_store_domain']);
         if (! str_ends_with($domain, '.myshopify.com') || in_array($domain, [
@@ -87,23 +114,29 @@ class SettingController extends Controller
             ]);
         }
 
-        if (! ShopifyConfig::hasToken() && blank($data['shopify_access_token'])) {
-            return back()->withErrors(['shopify_access_token' => 'Paste the Admin API access token from your Shopify custom app.']);
+        $willHaveToken = filled($data['shopify_access_token']) || ShopifyConfig::hasToken();
+        $willHaveClient = filled($data['shopify_client_id']) && (filled($data['shopify_client_secret']) || filled($data['shopify_webhook_secret']) || ShopifyConfig::hasClientCredentials());
+        if (! $willHaveToken && ! $willHaveClient && ! filled($data['shopify_client_id'])) {
+            return back()->withErrors(['shopify_access_token' => 'Paste a shpat_ Admin API token, or Client ID + Client secret from the Dev Dashboard.']);
         }
 
-        if ($request->boolean('shopify_live') && blank($data['shopify_webhook_secret'] ?? null) && blank(ShopifyConfig::webhookSecret())) {
-            return back()->withErrors(['shopify_webhook_secret' => 'Live mode needs the API secret key so Shopify webhooks can be verified.']);
+        if ($request->boolean('shopify_live') && blank($data['shopify_webhook_secret'] ?? null) && blank(ShopifyConfig::webhookSecret()) && blank($data['shopify_client_secret'])) {
+            return back()->withErrors(['shopify_webhook_secret' => 'Live mode needs the API secret key (webhook HMAC) or a Dev Dashboard client secret.']);
         }
+
+        $webhookSecret = $data['shopify_webhook_secret'] ?: $data['shopify_client_secret'];
 
         ShopifyConfig::saveConnection(
             $domain,
             $data['shopify_access_token'] ?? null,
-            $data['shopify_webhook_secret'] ?? null,
+            $webhookSecret,
             $data['shopify_callback_url'] ?: ShopifyConfig::publicBase(),
             $request->boolean('shopify_live'),
+            $data['shopify_client_id'] ?? null,
+            $data['shopify_client_secret'] ?? null,
         );
 
-        return back()->with('status', 'Shopify connection saved. Next: Test connection, then register webhooks.');
+        return back()->with('status', 'Shopify connection saved. Next: Test connection.');
     }
 
     public function test(ShopifyGraphqlClient $shopify): RedirectResponse
@@ -135,6 +168,26 @@ class SettingController extends Controller
         $topics = collect($created)->pluck('topic')->implode(', ');
 
         return back()->with('status', 'Registered GraphQL webhooks for '.$topics.' → '.$url);
+    }
+
+    public function sync(ShopifyGraphqlClient $shopify, RewardsService $rewards): RedirectResponse
+    {
+        if ($shopify->shouldMock()) {
+            return back()->withErrors([
+                'shopify_access_token' => 'Turn on live mode, save, and Test connection first. Then pull customers and orders from Shopify.',
+            ]);
+        }
+
+        try {
+            $result = $rewards->syncLiveShopify(ShopifyConfig::storeDomain());
+        } catch (ShopifyGraphQLException $e) {
+            return back()->withErrors(['shopify_access_token' => $e->getMessage()]);
+        }
+
+        return back()->with(
+            'status',
+            'Pulled from Shopify: '.$result['customers'].' customer bonus(es), '.$result['orders'].' paid order(s). Look up the customer email on the Portal.'
+        );
     }
 
     public function repairDatabase(): RedirectResponse

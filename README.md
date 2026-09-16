@@ -10,8 +10,8 @@ A working points-based loyalty program for a Shopify development store. Laravel 
 | --- | --- | --- |
 | Make a purchase | 2 per £1 | Amount actually paid after discounts. 14-day hold before spendable. |
 | Create an account | 200 | One-time, `customers/create`. |
-| Newsletter signup | 100 | One-time. Only when `email_marketing_consent.state` is `subscribed` (or `accepts_marketing` true). Not on every profile save. |
-| Birthday | 250 | Once per calendar year, from a date the customer provides (note, metafield, tag `birthday:YYYY-MM-DD`, or `note` field). |
+| Newsletter signup | 100 | One-time, genuine Shopify opt-in. New emails on the theme footer form get tag `newsletter`. Existing customers: set Email marketing to Subscribed on the Shopify customer (or opt in at checkout), then look up the email on the Portal — the app reads consent with GraphQL because the footer form often does not update an existing profile. |
+| Birthday | 250 | Once per calendar year, from a date the customer provides. **Do not use Checkout Profile “Add block”.** Save the date on the Rewards Portal or Admin customer page. Shopify webhooks never include `custom.birthday`; this app reads that metafield with GraphQL on lookup, and also accepts a customer note/tag `birthday:YYYY-MM-DD`. |
 
 ### Spend (100 points = £1)
 
@@ -58,7 +58,8 @@ Do not run the command from the `public` folder.
 
 ## Connect a Shopify development store
 
-1. Create a custom app with scopes: `read_orders`, `read_customers`, `read_products`, `write_discounts`, `write_gift_cards`.
+1. Create a custom app **inside this Shopify store** (Settings → Apps → Develop apps) with scopes: `read_orders`, `read_customers`, `write_customers`, `read_products`, `write_discounts`, `write_gift_cards`.
+   Or, if the app was created in the Shopify Dev Dashboard / CLI, paste **Client ID + Client secret** on Admin → Shopify settings instead of a `shpat_` token (those tokens expire).
 2. Install it. Copy the Admin API token and API secret key.
 3. On `/admin/settings`, paste `your-store.myshopify.com`, the token, the secret, and this app’s public HTTPS URL. Enable live mode.
 4. Add Notifications / app webhooks (custom apps often cannot create them via GraphQL):
@@ -74,11 +75,26 @@ Optional `.env`:
 
 ```
 SHOPIFY_STORE_DOMAIN=your-shop.myshopify.com
-SHOPIFY_API_VERSION=2025-01
+SHOPIFY_API_VERSION=2026-07
 SHOPIFY_ACCESS_TOKEN=shpat_...
 SHOPIFY_WEBHOOK_SECRET=...
 SHOPIFY_MOCK=false
 ```
+
+## Birthday (easiest working path)
+
+Shopify will not show `custom.birthday` on the new customer Profile unless you build a Customer Account UI extension. The Shopify CLI app you created is not that extension, and “Add block” staying empty is expected. Saving the metafield in Admin also does nothing by itself: `customers/update` payloads do not include metafields.
+
+**Award 250 points today**
+
+1. Upload this build and click **Update database** on Settings if the live site 500s.
+2. Open the Rewards Portal (`/`).
+3. Enter the customer’s Shopify email and today’s date under **Your birthday**.
+4. Click **Save birthday**. The ledger shows `Birthday · 250 points`.
+
+Same action exists on Admin → that customer. Looking up the email also pulls `custom.birthday` via GraphQL if you already stored it in Shopify.
+
+Optional daily cron: `php artisan rewards:award-birthdays`.
 
 ## Walkthrough
 
@@ -89,6 +105,13 @@ SHOPIFY_MOCK=false
 ## Brief explanation
 
 See `docs/EXPLANATION.md`.
+
+## Operator manual
+
+A slide-style user manual (screenshots of the Portal and Admin) is in:
+
+- `docs/Rewards-System-User-Manual.pdf`
+- `docs/Rewards-System-User-Manual.pptx`
 
 ## Hostinger 500 after upload
 

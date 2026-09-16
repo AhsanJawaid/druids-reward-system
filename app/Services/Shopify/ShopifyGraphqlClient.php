@@ -133,6 +133,98 @@ query collectionProducts($id: ID!) {
 }
 GQL;
 
+    public const CUSTOMER_BIRTHDAY_SEARCH = <<<'GQL'
+query customerBirthday($query: String!) {
+  customers(first: 1, query: $query) {
+    nodes {
+      id
+      email
+      tags
+      emailMarketingConsent {
+        marketingState
+      }
+      metafield(namespace: "custom", key: "birthday") {
+        value
+      }
+    }
+  }
+}
+GQL;
+
+    public const CUSTOMER_BIRTHDAY_BY_ID = <<<'GQL'
+query customerBirthdayById($id: ID!) {
+  customer(id: $id) {
+    id
+    email
+    tags
+    emailMarketingConsent {
+      marketingState
+    }
+    metafield(namespace: "custom", key: "birthday") {
+      value
+    }
+  }
+}
+GQL;
+
+    public const METAFIELDS_SET = <<<'GQL'
+mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+  metafieldsSet(metafields: $metafields) {
+    metafields {
+      id
+      key
+      value
+    }
+    userErrors {
+      field
+      message
+    }
+  }
+}
+GQL;
+
+    public const RECENT_CUSTOMERS = <<<'GQL'
+query recentCustomers {
+  customers(first: 25, sortKey: CREATED_AT, reverse: true) {
+    nodes {
+      id
+      email
+      firstName
+      tags
+      emailMarketingConsent {
+        marketingState
+      }
+      metafield(namespace: "custom", key: "birthday") {
+        value
+      }
+    }
+  }
+}
+GQL;
+
+    public const RECENT_ORDERS = <<<'GQL'
+query recentOrders {
+  orders(first: 25, sortKey: CREATED_AT, reverse: true) {
+    nodes {
+      id
+      name
+      email
+      displayFinancialStatus
+      currentSubtotalPriceSet {
+        shopMoney {
+          amount
+        }
+      }
+      customer {
+        id
+        email
+        firstName
+      }
+    }
+  }
+}
+GQL;
+
     /**
      * @param  array<string, mixed>  $variables
      * @return array<string, mixed>
@@ -148,9 +240,9 @@ GQL;
 
         $domain = ShopifyConfig::storeDomain();
         $version = ShopifyConfig::apiVersion();
-        $token = ShopifyConfig::accessToken();
+        $token = $this->resolveAccessToken();
         if ($token === '' || $domain === '') {
-            throw new ShopifyGraphQLException('Add your shop domain and Admin API access token first.');
+            throw new ShopifyGraphQLException('Add your shop domain and either an Admin API access token (shpat_) or Dev Dashboard client ID + secret.');
         }
 
         $payload = ['query' => $query];
@@ -158,26 +250,20 @@ GQL;
             $payload['variables'] = $variables;
         }
 
-        $http = Http::withHeaders([
-            'X-Shopify-Access-Token' => $token,
-            'Content-Type' => 'application/json',
-        ])->timeout(20)->post("https://{$domain}/admin/api/{$version}/graphql.json", $payload);
-
+        $http = $this->postGraphql($domain, $version, $token, $payload);
         $body = $http->json() ?? ['errors' => [['message' => 'Empty Shopify response']]];
         $this->log($operation, $query, $variables, $body, $http->status(), false);
 
+        if ($http->status() === 401 && ShopifyConfig::hasClientCredentials()) {
+            ShopifyConfig::forgetCachedOauthToken();
+            $token = $this->exchangeClientCredentials();
+            $http = $this->postGraphql($domain, $version, $token, $payload);
+            $body = $http->json() ?? ['errors' => [['message' => 'Empty Shopify response']]];
+            $this->log($operation.'-retry', $query, $variables, $body, $http->status(), false);
+        }
+
         if ($http->failed()) {
-            if ($http->status() === 401 && $operation === 'webhookSubscriptionCreate') {
-                throw new ShopifyGraphQLException(
-                    'Shopify returned 401 for webhook create. Custom apps usually cannot register webhooks through the API. Add Order payment, Refund create, Customer creation, and Customer update webhooks in Shopify Admin (steps on the Shopify settings page).'
-                );
-            }
-            if ($http->status() === 401) {
-                throw new ShopifyGraphQLException(
-                    'Shopify returned 401 Unauthorized. Re-install the custom app, copy a new Admin API access token, and paste it on this page.'
-                );
-            }
-            throw new ShopifyGraphQLException('Shopify Admin GraphQL HTTP '.$http->status());
+            throw new ShopifyGraphQLException($this->httpFailureMessage($http->status(), $operation, $domain, $body));
         }
 
         return $body;
@@ -391,6 +477,145 @@ GQL;
         ])->all();
     }
 
+    /**
+     * @return array{id: ?string, email: ?string, birthday: ?string, tags: ?string, marketing_state: ?string}
+     */
+    public function findCustomerBirthday(?string $email = null, ?string $customerGid = null): array
+    {
+        return $this->findCustomerProfile($email, $customerGid);
+    }
+
+    /**
+     * @return array{id: ?string, email: ?string, birthday: ?string, tags: ?string, marketing_state: ?string}
+     */
+    public function findCustomerProfile(?string $email = null, ?string $customerGid = null): array
+    {
+        $empty = [
+            'id' => $customerGid,
+            'email' => $email,
+            'birthday' => null,
+            'tags' => null,
+            'marketing_state' => null,
+        ];
+
+        if ($this->shouldMock()) {
+            return $empty;
+        }
+
+        try {
+            if ($customerGid && str_starts_with($customerGid, 'gid://')) {
+                $raw = $this->mutate('customerBirthdayById', self::CUSTOMER_BIRTHDAY_BY_ID, ['id' => $customerGid], true);
+                $this->throwUserErrors($raw, 'errors');
+                $node = data_get($raw, 'data.customer');
+            } elseif (filled($email)) {
+                $raw = $this->mutate('customerBirthday', self::CUSTOMER_BIRTHDAY_SEARCH, [
+                    'query' => 'email:'.strtolower($email),
+                ], true);
+                $this->throwUserErrors($raw, 'errors');
+                $node = data_get($raw, 'data.customers.nodes.0');
+            } else {
+                return $empty;
+            }
+        } catch (\Throwable) {
+            return $empty;
+        }
+
+        if (! is_array($node) || $node === []) {
+            return $empty;
+        }
+
+        $value = data_get($node, 'metafield.value');
+        $tags = data_get($node, 'tags', []);
+        if (is_array($tags)) {
+            $tags = implode(',', $tags);
+        }
+
+        $state = data_get($node, 'emailMarketingConsent.marketingState');
+
+        return [
+            'id' => (string) data_get($node, 'id', $customerGid),
+            'email' => strtolower((string) data_get($node, 'email', $email)),
+            'birthday' => is_string($value) && $value !== '' ? $value : null,
+            'tags' => is_string($tags) && $tags !== '' ? $tags : null,
+            'marketing_state' => is_string($state) && $state !== '' ? strtolower($state) : null,
+        ];
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    public function recentCustomers(): array
+    {
+        if ($this->shouldMock()) {
+            return [];
+        }
+
+        $raw = $this->mutate('recentCustomers', self::RECENT_CUSTOMERS, [], true);
+        $this->throwUserErrors($raw, 'errors');
+
+        return array_values(array_filter((array) data_get($raw, 'data.customers.nodes', []), 'is_array'));
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    public function recentOrders(): array
+    {
+        if ($this->shouldMock()) {
+            return [];
+        }
+
+        $raw = $this->mutate('recentOrders', self::RECENT_ORDERS, [], true);
+        $this->throwUserErrors($raw, 'errors');
+
+        return array_values(array_filter((array) data_get($raw, 'data.orders.nodes', []), 'is_array'));
+    }
+
+    /**
+     * @param  array<string, mixed>  $order
+     * @return array<string, mixed>
+     */
+    public function graphqlOrderToWebhookPayload(array $order): array
+    {
+        $amount = (string) data_get($order, 'currentSubtotalPriceSet.shopMoney.amount', '0');
+        $email = (string) data_get($order, 'email', data_get($order, 'customer.email', ''));
+        $status = strtolower((string) data_get($order, 'displayFinancialStatus', 'paid'));
+
+        return [
+            'id' => data_get($order, 'id'),
+            'admin_graphql_api_id' => data_get($order, 'id'),
+            'name' => data_get($order, 'name'),
+            'email' => $email,
+            'financial_status' => $status,
+            'subtotal_price' => $amount,
+            'current_subtotal_price' => $amount,
+            'customer' => [
+                'id' => data_get($order, 'customer.id'),
+                'admin_graphql_api_id' => data_get($order, 'customer.id'),
+                'email' => data_get($order, 'customer.email', $email),
+                'first_name' => data_get($order, 'customer.firstName', ''),
+            ],
+        ];
+    }
+
+    public function writeCustomerBirthday(string $customerGid, string $ymd): void
+    {
+        if ($this->shouldMock() || $customerGid === '' || ! str_starts_with($customerGid, 'gid://shopify/Customer')) {
+            return;
+        }
+
+        $raw = $this->mutate('metafieldsSet', self::METAFIELDS_SET, [
+            'metafields' => [[
+                'ownerId' => $customerGid,
+                'namespace' => 'custom',
+                'key' => 'birthday',
+                'type' => 'date',
+                'value' => $ymd,
+            ]],
+        ], true);
+        $this->throwUserErrors($raw, 'data.metafieldsSet.userErrors');
+    }
+
     private function normalizeCollectionGid(string $id): string
     {
         $id = trim($id);
@@ -433,6 +658,7 @@ GQL;
     {
         $topics = [
             'ORDERS_PAID',
+            'ORDERS_CREATE',
             'REFUNDS_CREATE',
             'CUSTOMERS_CREATE',
             'CUSTOMERS_UPDATE',
@@ -441,12 +667,16 @@ GQL;
         $created = [];
 
         foreach ($topics as $topic) {
+            $subscription = [
+                'callbackUrl' => $callbackUrl,
+                'format' => 'JSON',
+            ];
+            if (str_starts_with($topic, 'CUSTOMERS')) {
+                $subscription['metafieldNamespaces'] = ['custom'];
+            }
             $raw = $this->mutate('webhookSubscriptionCreate', self::WEBHOOK_CREATE, [
                 'topic' => $topic,
-                'webhookSubscription' => [
-                    'callbackUrl' => $callbackUrl,
-                    'format' => 'JSON',
-                ],
+                'webhookSubscription' => $subscription,
             ], true);
             $errors = collect(data_get($raw, 'data.webhookSubscriptionCreate.userErrors', []))->pluck('message')->filter();
             $already = $errors->contains(fn ($message) => str_contains(strtolower((string) $message), 'already')
@@ -472,6 +702,68 @@ GQL;
         }
 
         return ! ShopifyConfig::hasToken();
+    }
+
+    /**
+     * Prefer a fresh Dev Dashboard client-credentials token. Static shpat_ tokens
+     * from CLI apps expire and produce 401 Invalid API key or access token.
+     */
+    private function resolveAccessToken(): string
+    {
+        if ($cached = ShopifyConfig::cachedOauthToken()) {
+            return $cached;
+        }
+
+        if (ShopifyConfig::hasClientCredentials()) {
+            return $this->exchangeClientCredentials();
+        }
+
+        return ShopifyConfig::accessToken();
+    }
+
+    private function exchangeClientCredentials(): string
+    {
+        $domain = ShopifyConfig::storeDomain();
+        $clientId = ShopifyConfig::clientId();
+        $clientSecret = ShopifyConfig::clientSecret();
+        if ($domain === '' || $clientId === '' || $clientSecret === '') {
+            throw new ShopifyGraphQLException('Client ID and Client secret are required to fetch a Shopify access token.');
+        }
+
+        $http = Http::asForm()->timeout(20)->post("https://{$domain}/admin/oauth/access_token", [
+            'grant_type' => 'client_credentials',
+            'client_id' => $clientId,
+            'client_secret' => $clientSecret,
+        ]);
+
+        $body = $http->json() ?? [];
+        $this->log('clientCredentials', 'oauth/access_token', ['grant_type' => 'client_credentials'], $body, $http->status(), false);
+
+        $token = (string) data_get($body, 'access_token', '');
+        if ($http->failed() || $token === '') {
+            $detail = is_string($body['error_description'] ?? null)
+                ? (string) $body['error_description']
+                : (is_string($body['error'] ?? null) ? (string) $body['error'] : 'HTTP '.$http->status());
+            throw new ShopifyGraphQLException(
+                'Could not exchange Client ID/secret for a Shopify token ('.$detail.'). The app must be installed on '.$domain.', and the app and store must be in the same Dev Dashboard organization. Or create a custom app inside this store and paste the shpat_ token shown at install.'
+            );
+        }
+
+        ShopifyConfig::rememberOauthToken($token, (int) data_get($body, 'expires_in', 86399));
+
+        return $token;
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    private function postGraphql(string $domain, string $version, string $token, array $payload): \Illuminate\Http\Client\Response
+    {
+        return Http::withHeaders([
+            'X-Shopify-Access-Token' => $token,
+            'Content-Type' => 'application/json',
+            'Accept' => 'application/json',
+        ])->timeout(20)->post("https://{$domain}/admin/api/{$version}/graphql.json", $payload);
     }
 
     /**
@@ -591,6 +883,63 @@ GQL;
     }
 
     /**
+     * @param  array<string, mixed>  $body
+     */
+    private function httpFailureMessage(int $status, string $operation, string $domain, array $body): string
+    {
+        $shopify = $this->shopifyErrorText($body);
+
+        if ($status === 401 && $operation === 'webhookSubscriptionCreate') {
+            return 'Shopify returned 401 for webhook create. Custom apps usually cannot register webhooks through the API. Add the webhooks by hand on Admin → Shopify settings.';
+        }
+
+        if ($status === 401) {
+            return 'Shopify rejected the Admin API token for '.$domain
+                .' (401'
+                .($shopify !== '' ? ': '.$shopify : ' Invalid API key or access token')
+                .'). That usually means the saved shpat_ token is expired, from a Shopify CLI / Dev Dashboard app, or from a different shop. On Admin → Shopify settings paste Client ID + Client secret from the Dev Dashboard (or create a custom app inside this store, install it, and paste a new shpat_ token shown only once). Shop must be exactly '.$domain.'. Then Test connection.';
+        }
+
+        if ($status === 404) {
+            return 'Shopify returned 404 for Admin API '.$this->apiVersionHint().' on '.$domain.'. Check the shop domain is the *.myshopify.com hostname.';
+        }
+
+        return 'Shopify Admin GraphQL HTTP '.$status.($shopify !== '' ? ': '.$shopify : '');
+    }
+
+    /**
+     * @param  array<string, mixed>  $body
+     */
+    private function shopifyErrorText(array $body): string
+    {
+        $errors = $body['errors'] ?? $body['error'] ?? null;
+        if (is_string($errors)) {
+            return $errors;
+        }
+        if (is_array($errors)) {
+            $parts = collect($errors)->map(function ($item) {
+                if (is_string($item)) {
+                    return $item;
+                }
+                if (is_array($item)) {
+                    return (string) ($item['message'] ?? json_encode($item));
+                }
+
+                return '';
+            })->filter()->all();
+
+            return implode('; ', $parts);
+        }
+
+        return '';
+    }
+
+    private function apiVersionHint(): string
+    {
+        return ShopifyConfig::apiVersion();
+    }
+
+    /**
      * @param  array<string, mixed>  $raw
      */
     private function throwUserErrors(array $raw, string $path): void
@@ -601,7 +950,13 @@ GQL;
             ->filter();
 
         if ($errors->isNotEmpty()) {
-            throw new ShopifyGraphQLException($errors->implode('; '));
+            $text = $errors->implode('; ');
+            if (str_contains(strtolower($text), 'access denied') || str_contains(strtolower($text), 'access scope')) {
+                throw new ShopifyGraphQLException(
+                    $text.' Enable write_discounts (and write_gift_cards for gift cards) on the custom app, click Save, then reinstall the app so a new Admin API access token is issued. Paste that token on Admin → Shopify settings.'
+                );
+            }
+            throw new ShopifyGraphQLException($text);
         }
     }
 }

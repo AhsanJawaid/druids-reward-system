@@ -29,6 +29,19 @@
         @else
             <p class="muted" style="margin-top:12px">Use the same email as your Shopify customer account.</p>
         @endif
+        <form method="post" action="{{ route('storefront.birthday') }}" style="margin-top:16px">
+            @csrf
+            @if ($customer || session('storefront_email'))
+                <input type="hidden" name="email" value="{{ $customer?->email ?? session('storefront_email') }}">
+            @else
+                <label for="birthday-email">Email</label>
+                <input id="birthday-email" name="email" type="email" required placeholder="you@email.com">
+            @endif
+            <label for="birthday">Your birthday</label>
+            <input id="birthday" name="birthday" type="date" required value="{{ $customer?->birthday?->format('Y-m-d') }}">
+            <button type="submit">Save birthday · 250 pts if today</button>
+        </form>
+        <p class="tiny">Shopify does not send the customer-profile metafield in webhooks. Save the date here (the date you provide). If today matches month and day, 250 points post once this year.</p>
     </aside>
 </section>
 

@@ -26,12 +26,24 @@ class ShopifyWebhookController extends Controller
                 'orders/create',
                 'orders/updated',
                 'orders/fulfilled',
+                'orders/partially_fulfilled',
             ], true)) {
+                $fromCustomer = $this->customerPayloadFromOrder($payload);
+                $account = $rewards->awardAccountCreated($fromCustomer, $shop);
                 $tx = $rewards->earnFromOrder($payload, $shop);
-                $birthday = $rewards->awardBirthdayIfDue($this->customerPayloadFromOrder($payload), $shop);
+                $newsletter = $rewards->awardNewsletterOptIn($fromCustomer, $shop);
+                $birthday = $rewards->awardBirthdayIfDue($fromCustomer, $shop);
                 $parts = [];
+                if ($account && $account->wasRecentlyCreated) {
+                    $parts[] = "account_create:{$account->points}";
+                }
                 if ($tx) {
                     $parts[] = "earn:{$tx->points}:{$tx->idempotency_key}";
+                } elseif (! in_array(strtolower((string) data_get($payload, 'financial_status', '')), ['paid', 'partially_paid', 'partially_refunded'], true)) {
+                    $parts[] = 'order-received-not-paid';
+                }
+                if ($newsletter && $newsletter->wasRecentlyCreated) {
+                    $parts[] = "newsletter:{$newsletter->points}";
                 }
                 if ($birthday && $birthday->wasRecentlyCreated) {
                     $parts[] = "birthday:{$birthday->points}";
@@ -87,6 +99,10 @@ class ShopifyWebhookController extends Controller
         $customer['note_attributes'] = $customer['note_attributes'] ?? data_get($order, 'note_attributes', []);
         $customer['note'] = $customer['note'] ?? data_get($order, 'note', data_get($order, 'customer.note'));
         $customer['tags'] = $customer['tags'] ?? data_get($order, 'tags', data_get($order, 'customer.tags'));
+        $customer['accepts_marketing'] = $customer['accepts_marketing'] ?? data_get($order, 'buyer_accepts_marketing');
+        if (! isset($customer['email_marketing_consent']) && data_get($order, 'customer.email_marketing_consent')) {
+            $customer['email_marketing_consent'] = data_get($order, 'customer.email_marketing_consent');
+        }
 
         return $customer;
     }

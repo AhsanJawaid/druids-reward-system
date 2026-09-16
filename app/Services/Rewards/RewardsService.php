@@ -34,7 +34,14 @@ class RewardsService
             return null;
         }
 
-        $status = strtolower((string) data_get($order, 'financial_status', 'paid'));
+        $status = strtolower((string) data_get(
+            $order,
+            'financial_status',
+            data_get($order, 'displayFinancialStatus', data_get($order, 'display_financial_status', ''))
+        ));
+        if ($status === '') {
+            $status = data_get($order, 'fullyPaid') === true ? 'paid' : 'pending';
+        }
         $paidStatuses = ['paid', 'partially_paid', 'partially_refunded'];
         if (! in_array($status, $paidStatuses, true)) {
             return null;
@@ -182,6 +189,75 @@ class RewardsService
     }
 
     /**
+     * Pull recent Shopify customers and paid orders when webhooks never arrived.
+     *
+     * @return array{customers: int, orders: int, points: int}
+     */
+    public function syncLiveShopify(string $shopDomain): array
+    {
+        $customers = $this->shopify->recentCustomers();
+        $orders = $this->shopify->recentOrders();
+        $customerHits = 0;
+        $orderHits = 0;
+        $points = 0;
+
+        foreach ($customers as $node) {
+            $payload = [
+                'id' => data_get($node, 'id'),
+                'admin_graphql_api_id' => data_get($node, 'id'),
+                'email' => data_get($node, 'email'),
+                'first_name' => data_get($node, 'firstName'),
+                'tags' => is_array(data_get($node, 'tags')) ? implode(',', (array) data_get($node, 'tags')) : data_get($node, 'tags'),
+                'email_marketing_consent' => [
+                    'state' => strtolower((string) data_get($node, 'emailMarketingConsent.marketingState', '')),
+                ],
+                'birthday' => data_get($node, 'metafield.value'),
+            ];
+            $before = PointTransaction::query()->count();
+            $this->processCustomerWebhook($payload, $shopDomain, 'customers/create');
+            $this->awardBirthdayIfDue($payload, $shopDomain);
+            if (PointTransaction::query()->count() > $before) {
+                $customerHits++;
+            }
+        }
+
+        foreach ($orders as $node) {
+            $payload = $this->shopify->graphqlOrderToWebhookPayload($node);
+            $before = PointTransaction::query()->sum('points');
+            $this->awardAccountCreated($this->emailNamePayload($payload), $shopDomain);
+            $tx = $this->earnFromOrder($payload, $shopDomain);
+            $this->awardBirthdayIfDue($this->emailNamePayload($payload), $shopDomain);
+            if ($tx && $tx->wasRecentlyCreated) {
+                $orderHits++;
+            }
+            $points += (int) PointTransaction::query()->sum('points') - (int) $before;
+        }
+
+        return [
+            'customers' => $customerHits,
+            'orders' => $orderHits,
+            'points' => (int) $points,
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @return array<string, mixed>
+     */
+    private function emailNamePayload(array $payload): array
+    {
+        return [
+            'email' => $this->emailFrom($payload),
+            'id' => $this->customerShopifyId($payload),
+            'admin_graphql_api_id' => $this->customerShopifyId($payload),
+            'first_name' => (string) data_get($payload, 'customer.first_name', data_get($payload, 'first_name', '')),
+            'birthday' => data_get($payload, 'birthday'),
+            'tags' => data_get($payload, 'tags', data_get($payload, 'customer.tags')),
+            'email_marketing_consent' => data_get($payload, 'email_marketing_consent', data_get($payload, 'customer.email_marketing_consent')),
+        ];
+    }
+
+    /**
      * @param  array<string, mixed>  $payload
      */
     public function awardAccountCreated(array $payload, string $shopDomain): ?PointTransaction
@@ -229,6 +305,12 @@ class RewardsService
      */
     public function awardNewsletterOptIn(array $payload, string $shopDomain): ?PointTransaction
     {
+        try {
+            $payload = $this->enrichMarketingFromShopify($payload);
+        } catch (\Throwable) {
+            // Still award from the webhook body if Shopify GraphQL is unreachable.
+        }
+
         if (! $this->isGenuineMarketingOptIn($payload)) {
             return null;
         }
@@ -265,6 +347,161 @@ class RewardsService
     }
 
     /**
+     * Pull Shopify email marketing / newsletter tags, then award 100 points if subscribed.
+     */
+    public function refreshNewsletterFromShopify(string $shopDomain, string $email, ?string $customerGid = null): ?PointTransaction
+    {
+        return $this->syncShopifyCustomerBonuses($shopDomain, $email, $customerGid)['newsletter'];
+    }
+
+    /**
+     * @return array{newsletter: ?PointTransaction, birthday: ?PointTransaction}
+     */
+    public function syncShopifyCustomerBonuses(string $shopDomain, string $email, ?string $customerGid = null): array
+    {
+        $email = strtolower($email);
+        $found = $this->shopify->findCustomerProfile($email, $customerGid);
+        $payload = [
+            'email' => $found['email'] ?: $email,
+            'admin_graphql_api_id' => $found['id'],
+            'id' => $found['id'],
+            'tags' => $found['tags'],
+            'birthday' => $found['birthday'],
+            'email_marketing_consent' => ['state' => $found['marketing_state']],
+        ];
+
+        return [
+            'newsletter' => $this->awardNewsletterOptIn($payload, $shopDomain),
+            'birthday' => $this->awardBirthdayIfDue($payload, $shopDomain),
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @return array<string, mixed>
+     */
+    private function enrichMarketingFromShopify(array $payload): array
+    {
+        if ($this->isGenuineMarketingOptIn($payload)) {
+            return $payload;
+        }
+
+        $found = $this->shopify->findCustomerProfile($this->emailFrom($payload), $this->customerShopifyId($payload));
+        if ($found['marketing_state']) {
+            $payload['email_marketing_consent'] = array_merge(
+                (array) data_get($payload, 'email_marketing_consent', []),
+                ['state' => $found['marketing_state']],
+            );
+        }
+        if ($found['tags']) {
+            $existingTags = (string) data_get($payload, 'tags', '');
+            $payload['tags'] = trim($existingTags === '' ? $found['tags'] : $existingTags.','.$found['tags'], ',');
+        }
+        if ($found['id']) {
+            $payload['admin_graphql_api_id'] = $found['id'];
+        }
+
+        return $payload;
+    }
+
+    /**
+     * Customer provides a birthday. Stored on the ledger customer, copied to
+     * Shopify custom.birthday when live, and 250 points post if today matches.
+     */
+    public function saveProvidedBirthday(string $shopDomain, string $email, string $ymd, ?string $name = null): ?PointTransaction
+    {
+        $email = strtolower($email);
+        $payload = [
+            'email' => $email,
+            'birthday' => $ymd,
+            'first_name' => $name ?: '',
+        ];
+
+        $tx = $this->awardBirthdayIfDue($payload, $shopDomain);
+
+        $customer = Customer::query()->where('shop_domain', $shopDomain)->where('email', $email)->first();
+        if ($customer) {
+            $this->pushBirthdayToShopify($customer);
+        }
+
+        return $tx;
+    }
+
+    /**
+     * Pull custom.birthday from Shopify Admin API, then award if today is the birthday.
+     */
+    public function refreshBirthdayFromShopify(string $shopDomain, string $email, ?string $customerGid = null): ?PointTransaction
+    {
+        $email = strtolower($email);
+        $found = $this->shopify->findCustomerBirthday($email, $customerGid);
+        $payload = [
+            'email' => $found['email'] ?: $email,
+            'admin_graphql_api_id' => $found['id'],
+            'id' => $found['id'],
+            'birthday' => $found['birthday'],
+        ];
+
+        if (! $found['birthday']) {
+            $existing = Customer::query()->where('shop_domain', $shopDomain)->where('email', $email)->first();
+            if ($existing?->birthday) {
+                $payload['birthday'] = $existing->birthday->toDateString();
+            } else {
+                return null;
+            }
+        }
+
+        return $this->awardBirthdayIfDue($payload, $shopDomain);
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @return array<string, mixed>
+     */
+    private function enrichBirthdayFromShopify(array $payload): array
+    {
+        if ($this->extractBirthday($payload)) {
+            return $payload;
+        }
+
+        $found = $this->shopify->findCustomerBirthday($this->emailFrom($payload), $this->customerShopifyId($payload));
+        if ($found['birthday']) {
+            $payload['birthday'] = $found['birthday'];
+        }
+        if ($found['id']) {
+            $payload['admin_graphql_api_id'] = $found['id'];
+        }
+
+        return $payload;
+    }
+
+    private function pushBirthdayToShopify(Customer $customer): void
+    {
+        if (! $customer->birthday) {
+            return;
+        }
+
+        $gid = $customer->shopify_customer_id;
+        if (! $gid || ! str_starts_with((string) $gid, 'gid://')) {
+            $found = $this->shopify->findCustomerBirthday($customer->email, is_string($gid) ? $gid : null);
+            $gid = $found['id'];
+            if ($gid && ! $customer->shopify_customer_id) {
+                $customer->shopify_customer_id = $gid;
+                $customer->save();
+            }
+        }
+
+        if (! is_string($gid) || $gid === '') {
+            return;
+        }
+
+        try {
+            $this->shopify->writeCustomerBirthday($gid, $customer->birthday->toDateString());
+        } catch (\Throwable) {
+            // Local ledger still holds the date even if Shopify metafield write is denied.
+        }
+    }
+
+    /**
      * 250 points once per calendar year when the stored Shopify birthday matches today.
      *
      * @param  array<string, mixed>  $payload
@@ -274,6 +511,12 @@ class RewardsService
         $email = $this->emailFrom($payload);
         if ($email === '') {
             return null;
+        }
+
+        try {
+            $payload = $this->enrichBirthdayFromShopify($payload);
+        } catch (\Throwable) {
+            // Birthday still awards from the local ledger / portal date if Shopify is unreachable.
         }
 
         $birthday = $this->extractBirthday($payload);
@@ -489,7 +732,10 @@ class RewardsService
 
         return in_array('newsletter', $tags, true)
             || in_array('email subscribe', $tags, true)
-            || in_array('email-subscribe', $tags, true);
+            || in_array('email-subscribe', $tags, true)
+            || in_array('email signup', $tags, true)
+            || in_array('email-signup', $tags, true)
+            || in_array('shopify email', $tags, true);
     }
 
     /**
@@ -522,7 +768,8 @@ class RewardsService
 
         foreach ((array) data_get($payload, 'metafields', []) as $field) {
             $key = strtolower((string) data_get($field, 'key', ''));
-            if (str_contains($key, 'birthday') || str_contains($key, 'birth') || $key === 'dob') {
+            $namespace = strtolower((string) data_get($field, 'namespace', ''));
+            if ($key === 'birthday' || ($namespace === 'custom' && $key === 'birthday') || str_contains($key, 'birthday') || str_contains($key, 'birth') || $key === 'dob') {
                 $candidates[] = data_get($field, 'value');
             }
         }

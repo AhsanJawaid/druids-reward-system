@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Route;
 
 Route::get('/', [StorefrontController::class, 'home'])->name('storefront.home');
 Route::post('/identify', [StorefrontController::class, 'identify'])->name('storefront.identify');
+Route::post('/birthday', [StorefrontController::class, 'saveBirthday'])->name('storefront.birthday');
 Route::post('/redeem', [StorefrontController::class, 'redeem'])->name('storefront.redeem');
 
 Route::prefix('admin')->name('admin.')->group(function () {
@@ -17,10 +18,12 @@ Route::prefix('admin')->name('admin.')->group(function () {
     Route::get('/customers', [CustomerController::class, 'index'])->name('customers.index');
     Route::get('/customers/{customer}', [CustomerController::class, 'show'])->name('customers.show');
     Route::post('/customers/{customer}/adjust', [CustomerController::class, 'adjust'])->name('customers.adjust');
+    Route::post('/customers/{customer}/birthday', [CustomerController::class, 'saveBirthday'])->name('customers.birthday');
     Route::get('/settings', [SettingController::class, 'edit'])->name('settings.edit');
     Route::put('/settings', [SettingController::class, 'update'])->name('settings.update');
     Route::post('/settings/shopify', [SettingController::class, 'connect'])->name('settings.connect');
     Route::post('/settings/shopify/test', [SettingController::class, 'test'])->name('settings.test');
     Route::post('/settings/shopify/webhooks', [SettingController::class, 'registerWebhooks'])->name('settings.webhooks');
+    Route::post('/settings/shopify/sync', [SettingController::class, 'sync'])->name('settings.sync');
     Route::post('/settings/repair-database', [SettingController::class, 'repairDatabase'])->name('settings.repair');
 });
